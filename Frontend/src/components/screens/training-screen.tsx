@@ -405,6 +405,9 @@ export function TrainingScreen() {
       )}
 
       {/* Confetti + toast for reward redemption */}
+      <div className="fixed inset-0 z-50 pointer-events-none" aria-hidden="true">
+        <Confetti active={rewardConfetti} />
+      </div>
       <SuccessToast show={showRewardToast} message="Reward redeemed!" sub="Show the code to your manager to claim" />
 
       {/* ── Quiz view ─────────────────────────────────────────── */}
