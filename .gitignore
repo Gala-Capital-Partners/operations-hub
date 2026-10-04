@@ -1,0 +1,48 @@
+# ========== Dependencies ==========
+node_modules/
+.pnpm-store/
+.yarn/cache/
+.yarn/install-state.gz
+
+# ========== Build output ==========
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+.vite/
+.cache/
+coverage/
+
+# ========== Environment variables / secrets (never commit) ==========
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ========== Logs ==========
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ========== Local databases / uploaded files ==========
+*.sqlite
+*.sqlite3
+*.db
+uploads/
+
+# ========== Editors ==========
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# ========== OS files ==========
+.DS_Store
+Thumbs.db
+desktop.ini
