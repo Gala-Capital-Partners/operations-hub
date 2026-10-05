@@ -7,10 +7,18 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Backend (typecheck + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -18,7 +26,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
@@ -28,16 +36,17 @@ jobs:
   frontend:
     name: Frontend (lint + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: Frontend
     env:
-      NEXT_TELEMETRY_DISABLED: 1
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
           cache-dependency-path: Frontend/package-lock.json
       - run: npm ci
