@@ -19,27 +19,22 @@ jobs:
     name: Backend (typecheck + build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: backend
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: package-lock.json
+
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
+      - run: npm run typecheck:server
+      - run: npm run build:server
 
   frontend:
     name: Frontend (lint + build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: Frontend
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -48,7 +43,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: Frontend/package-lock.json
+          cache-dependency-path: package-lock.json
+
       - run: npm ci
       - run: npm run lint
-      - run: npm run build
+      - run: npm run build:client

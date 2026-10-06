@@ -25,7 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const DAY_LABELS_CONST = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 // The mock data is pinned to this demo date so "today" / "overdue" stay stable.
-// Must match DEMO_TODAY in backend/src/data/tasks.seed.ts.
+// Must match DEMO_TODAY in server/src/data/tasks.seed.ts.
 export const TODAY = '2026-08-19'
 
 export function getNavItems(role: Role): NavItem[] {

@@ -1,18 +1,15 @@
 # GalaPartnerAtlas — Frontend (Next.js)
 
-OpsHub web app, converted from the Figma Make export (`../Frontend`) to **Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS v4**.
+OpsHub web app, converted from the Figma Make export to **Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS v4**.
 
 ## Run it
 
+**From the repo root:**
+
 ```bash
 npm install
-npm run dev          # http://localhost:3000
-```
-
-The Tasks screens talk to the backend, so start it too (see `../backend`):
-
-```bash
-cd ../backend && npm install && npm run dev   # http://localhost:4000
+npm run dev:server          # http://localhost:4000
+npm run dev:client          # http://localhost:3000
 ```
 
 API URL defaults to `http://localhost:4000/api`. To change it, copy `.env.example` to `.env.local` and edit `NEXT_PUBLIC_API_URL`.

@@ -3,15 +3,15 @@
 Minimal **Express 5 + TypeScript** API. No database yet: tasks are kept **in memory**, seeded with the mock data from the Figma design. Restarting the server resets the data.
 
 ## Run it
-
+**From the repo root:**
 ```bash
 npm install
-npm run dev        # http://localhost:4000  (auto-reloads on change)
+npm run dev:server        # http://localhost:4000  (auto-reloads on change)
 ```
 
 Optional: copy `.env.example` to `.env` to change `PORT` or `CORS_ORIGIN` (default allows `http://localhost:3000`).
 
-Production build: `npm run build && npm start`.
+Production build: `npm run build:server && npm run start:server`.
 
 ## Task model
 

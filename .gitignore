@@ -46,3 +46,7 @@ uploads/
 .DS_Store
 Thumbs.db
 desktop.ini
+# ========== Next.js / Vercel / TypeScript ==========
+.vercel
+*.tsbuildinfo
+next-env.d.ts
