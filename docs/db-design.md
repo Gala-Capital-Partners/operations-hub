@@ -25,7 +25,7 @@ Task and checklist tables are designed separately. They will reference brands, l
 
 ## Access examples
 
-These role names illustrate the design. The exact role-permission and role-grant matrices require review.
+These examples use the proposed roles defined in the matrices below. The matrices require company review.
 
 | Person | Assignment | Storage | Access boundary |
 | --- | --- | --- | --- |
@@ -35,6 +35,85 @@ These role names illustrate the design. The exact role-permission and role-grant
 | Bob | `employee` at Store B | A second `user_locations` row | Store B |
 
 Promotion from brand administrator to organization administrator adds an organization assignment. Remove the old brand assignment if the promotion is intended to replace it; otherwise it remains effective and must be considered during later demotion. The user's identity does not change.
+
+## Proposed permission matrix
+
+**Review status:** Proposed initial-release behavior for Ali and the company to confirm. These rows specify intended access; they do not claim that the corresponding endpoints or policies are implemented.
+
+### How to read the matrix
+
+| Label | Meaning |
+| --- | --- |
+| Organization | The organization targeted by the caller's Organization Admin assignment |
+| Brand | The specific brand targeted by the caller's Brand Admin assignment |
+| Location | Each store where the caller holds the role named in that column |
+| Self | The caller's own application profile |
+| Denied | This role does not grant the action in the proposed initial release |
+
+Permissions from applicable assignments combine. A denied cell is an absence of a grant, not an override of another applicable role. Organization scope does not automatically include every permission. For example, an Organization Admin with a separate Location Manager assignment can complete tasks at that location through the location role.
+
+The proposed role keys are `org_admin`, `brand_admin`, `location_manager`, and `employee`. Corporate users who oversee one brand use the Brand Admin column; additional read-only corporate roles can be proposed separately if required.
+
+| Action / permission key | Organization Admin | Brand Admin | Location Manager | Employee |
+| --- | --- | --- | --- | --- |
+| View locations — `locations.read` | Organization | Brand | Location | Location |
+| View user profiles — `users.read` | Organization | Brand | Location | Self |
+| Invite users — `users.invite` | Organization | Brand | Denied | Denied |
+| Deactivate application accounts — `users.deactivate` | Organization | Denied | Denied | Denied |
+| View role assignments — `role_assignments.read` | Organization | Brand | Location | Own location assignment only |
+| Grant, replace, or revoke role assignments — `role_assignments.manage` | Organization, subject to role-assignment matrix | Brand, subject to role-assignment matrix | Denied | Denied |
+| Create/edit recurring task definitions — `tasks.manage` | Organization | Brand | Location | Denied |
+| View daily task instances — `task_instances.read` | Organization | Brand | Location | Location |
+| Mark task instances complete — `task_instances.complete` | Denied | Denied | Location | Location |
+| Reopen completed task instances — `task_instances.reopen` | Denied | Denied | Location | Denied |
+| View completion reports — `reports.read` | Organization | Brand | Location | Denied |
+
+### Resource and action boundaries
+
+- **User profiles:** active users can read their own application profile, including during controlled onboarding before assignments exist. Other profile visibility requires the scoped `users.read` grant. A Location Manager sees users assigned to the same stores where the caller is a manager. A Brand Admin sees users with effective access to that brand; an organization assignment counts as such access. This does not expose other brands' assignments or allow editing global profile fields. Organization Admins may view users in their organization, including users awaiting assignment.
+- **Assignment visibility:** profile visibility and assignment visibility are separate. A Brand Admin sees only brand and location assignments within the assigned brand, not another person's organization assignments. A Location Manager sees assignments at stores they manage. Each authenticated active user may inspect their own assignments for navigation and account display; this self-access does not grant visibility into other users' assignments.
+- **Invitations:** the inviter needs `users.invite` and authority over every proposed role and target. Invite permission alone cannot grant a role. Inviting a person already in another organization cannot silently move their account or attach it to the inviter's organization.
+- **Account deactivation:** this is organization-wide because `users.is_active` affects the whole account. Brand Admins remove authorized assignments within their brand instead of deactivating the person. Removing one assignment does not revoke access supplied by another applicable assignment, such as an organization role.
+- **Task definitions:** `tasks.manage` means create and edit recurring definitions. A Location Manager may affect only stores where they hold that role; changing a shared definition that affects other stores requires authority over all affected targets. Hard deletion and historical changes are not implicitly granted by this permission.
+- **Task completion:** the initial proposal allows employees to complete any task instance at an assigned store. Personally assigned tasks would require an additional assignee condition once that business rule and task model are defined. Reopening is a separate action, proposed for Location Managers only.
+- **Task inspection:** reads necessary to create/edit a definition must obey the same scope checks. These permissions must be reconciled with Student B's task API before that feature is implemented.
+- **Reports:** reporting uses the same organization, brand, and location boundaries. Historical access to inactive stores is a separate review item; `reports.read` alone does not settle that behavior.
+- **Scope remains attached to each permission:** Bob's manager grant at Store A cannot authorize task edits at Store B, even if both stores share a brand.
+
+Role definitions, permission definitions, and `role_permissions` are changed only through reviewed migrations. No application role receives runtime permission to edit that catalog. Authorized administrators can assign existing roles according to the next matrix.
+
+## Proposed role-assignment matrix
+
+This matrix defines which existing role assignments an actor may grant, replace, or revoke. Both `role_assignments.manage` and the matching matrix entry are required. The targets must also satisfy the database organization, brand, location, and scope constraints.
+
+| Actor's applicable role | Organization Admin assignment | Brand Admin assignment | Location Manager assignment | Employee assignment |
+| --- | --- | --- | --- | --- |
+| Organization Admin | Within assigned organization | Within assigned organization | Within assigned organization | Within assigned organization |
+| Brand Admin | Denied | Denied | Stores within assigned brand | Stores within assigned brand |
+| Location Manager | Denied | Denied | Denied | Denied |
+| Employee | Denied | Denied | Denied | Denied |
+
+### Assignment safeguards
+
+- Validate the existing assignment when revoking or replacing it, and the proposed assignment when granting or replacing it. An update must not move an otherwise allowed assignment into an unauthorized scope or target.
+- A new permission does not take effect until the assignment change commits. Permission checks use the actor's existing authority, never the authority they are attempting to grant themselves.
+- Changes to the actor's own assignments are denied through the ordinary assignment-management flow. Bootstrap and account-recovery procedures are separate and must be documented.
+- Proposed protection: do not allow the last active Organization Admin to be deactivated or lose their final organization-admin assignment. Concurrent changes must not bypass this invariant.
+- The role catalog has no numeric hierarchy. Authority comes from the explicit matrix, not a comparison such as “higher than my role.”
+- Record grants, replacements, and revocations in the planned audit log with the actor, target, and before/after state.
+
+### Example authorization decisions
+
+| Request | Proposed result | Reason |
+| --- | --- | --- |
+| Bob, manager at Store A, edits an A-only task definition | Allow | Location Manager has `tasks.manage` at A |
+| Bob, employee at Store B, edits a B-only task definition | Deny | Employee does not grant `tasks.manage` |
+| Bob completes a task at Store B | Allow | Employee grants completion at B |
+| Bob reopens a completed task at Store B | Deny | Employee does not grant reopening |
+| Nancy, Brand A Admin, assigns a manager at an A store | Allow | Role-grant matrix permits that target |
+| Nancy assigns Brand Admin or Organization Admin | Deny | Neither target role is permitted for Brand Admin |
+| Nancy removes an Organization Admin's organization assignment | Deny | The organization assignment exceeds her authority |
+| An Organization Admin with no location role completes a store task | Deny | Organization scope does not grant completion in this proposal |
 
 ## Entity relationship diagram
 
@@ -313,20 +392,25 @@ These workflows are not represented as completed migrations in this proposal.
 - Verify an employee cannot access another store's operational records in the same brand without an applicable assignment.
 - Verify a manager at Store A has only their assigned employee permissions at Store B.
 - Verify brand administrators cannot access another brand and organization administrators cannot access another organization. Include a second synthetic organization in tests.
-- Reject self-promotion and unauthorized broader grants according to the approved role-grant matrix.
+- Reject self-promotion and unauthorized broader grants according to the approved role-grant matrix. Check both old and new targets during replacements.
+- Verify employees cannot reopen task instances, and broader admin roles do not gain completion permissions without an applicable location grant under the proposed matrix.
+- Verify scoped profile access does not expose unrelated assignments; own-profile and own-assignment reads remain available to active users during onboarding.
+- Verify invite permission alone cannot create unauthorized assignments and brand-level assignment removal does not deactivate a global account.
+- Verify concurrent assignment revocation and account deactivation cannot remove the last active Organization Admin, if that proposed safeguard is approved.
 - Verify role revocation and user deactivation remove access on subsequent requests.
 - Verify context isolation after both commit and rollback, including concurrent requests through the intended pooler mode.
 - Verify direct SQL as the runtime role remains subject to RLS, including unsafe attempted INSERT and UPDATE targets.
 - Verify audit records survive assignment deletion and cannot be modified by the runtime role.
 
-## Open questions
+## Open questions for company review
 
-1. Does organization scope represent the requested higher-level access across all Gala brands? Do those users need consolidated reporting, brand switching, or both?
-2. What exact permissions belong to each initial role, and which roles may each administrator grant, revoke, or replace?
-3. Should employees see only users at their stores, or all users who share an accessible brand? Who can inspect organization-role assignments?
-4. Is the proposed inactive brand/location behavior correct, and which roles may read historical records?
-5. How should invitations, existing Auth accounts, email synchronization, and first-administrator provisioning work?
-6. Which timezone names are accepted, and how should timezone changes affect checklist scheduling?
-7. What audit retention and account-deletion procedures does the company require?
+1. Please approve or adjust the proposed permission and role-assignment matrices. Does organization scope represent the requested higher-level access across all Gala brands? Are both brand switching and consolidated reporting needed?
+2. Should employees complete every task at an assigned store, or only tasks personally assigned to them? The current proposal allows store-level completion and reserves reopening for location managers.
+3. Should Organization and Brand Admins be able to complete or reopen store tasks without an additional location role? The current proposal does not grant these actions through their broader roles.
+4. Is the proposed user-directory visibility correct: own profile for employees, shared-store profiles for managers, and profiles with relevant access for brand administrators? Should Brand Admins ever grant or revoke other Brand Admin assignments?
+5. Is the proposed inactive brand/location behavior correct, and which roles may read historical records? Should any broader role be protected from account deactivation by another administrator?
+6. How should invitations, existing Auth accounts, email synchronization, and first-administrator provisioning work? Confirm the proposed protection against removing the last active Organization Admin.
+7. Which timezone names are accepted, and how should timezone changes affect checklist scheduling?
+8. What audit retention and account-deletion procedures does the company require?
 
-After review, finalize the access and role-grant matrices and translate this specification into versioned migrations. The diagram alone is not evidence that constraints or policies have been implemented or tested.
+After review, translate the approved matrices into role-permission seed data, role-grant rules, and authorization tests alongside the versioned migrations. The diagram alone is not evidence that constraints or policies have been implemented or tested.
