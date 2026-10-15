@@ -38,7 +38,7 @@ Promotion from brand administrator to organization administrator adds an organiz
 
 ## Proposed permission matrix
 
-**Review status:** Proposed initial-release behavior for Ali and the company to confirm. These rows specify intended access; they do not claim that the corresponding endpoints or policies are implemented.
+**Review status:** Ali approved the permission matrices with two changes: Location Managers may invite users and assign or revoke Employee roles within locations they manage. Implementation and testing are pending.
 
 ### How to read the matrix
 
@@ -58,10 +58,10 @@ The proposed role keys are `org_admin`, `brand_admin`, `location_manager`, and `
 | --- | --- | --- | --- | --- |
 | View locations — `locations.read` | Organization | Brand | Location | Location |
 | View user profiles — `users.read` | Organization | Brand | Location | Self |
-| Invite users — `users.invite` | Organization | Brand | Denied | Denied |
+| Invite users — `users.invite` | Organization | Brand | Location | Denied |
 | Deactivate application accounts — `users.deactivate` | Organization | Denied | Denied | Denied |
 | View role assignments — `role_assignments.read` | Organization | Brand | Location | Own location assignment only |
-| Grant, replace, or revoke role assignments — `role_assignments.manage` | Organization, subject to role-assignment matrix | Brand, subject to role-assignment matrix | Denied | Denied |
+| Grant, replace, or revoke role assignments — `role_assignments.manage` | Organization, subject to role-assignment matrix | Brand, subject to role-assignment matrix | Location, Employee assignments only; subject to role-assignment matrix | Denied |
 | Create/edit recurring task definitions — `tasks.manage` | Organization | Brand | Location | Denied |
 | View daily task instances — `task_instances.read` | Organization | Brand | Location | Location |
 | Mark task instances complete — `task_instances.complete` | Denied | Denied | Location | Location |
@@ -90,7 +90,7 @@ This matrix defines which existing role assignments an actor may grant, replace,
 | --- | --- | --- | --- | --- |
 | Organization Admin | Within assigned organization | Within assigned organization | Within assigned organization | Within assigned organization |
 | Brand Admin | Denied | Denied | Stores within assigned brand | Stores within assigned brand |
-| Location Manager | Denied | Denied | Denied | Denied |
+| Location Manager | Denied | Denied | Denied | Stores where the actor holds a Location Manager role |
 | Employee | Denied | Denied | Denied | Denied |
 
 ### Assignment safeguards
