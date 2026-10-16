@@ -1,6 +1,6 @@
 -- Run this entire file against local Supabase PostgreSQL 17+ as postgres,
--- after migrations 1-3. This verifies the identity foundation before scoped
--- table grants/policies are added; update these expectations when adding them.
+-- after migrations 1-5. The runtime now has SELECT on locations only;
+-- other application tables and all writes remain inaccessible.
 -- Use one connection for the entire file so identity cleanup is meaningful.
 -- CLI: psql <local-connection> -X -v ON_ERROR_STOP=1 -f <this-file>
 -- All fixtures and the future-table probe are rolled back. The COMMIT test
@@ -244,9 +244,19 @@ BEGIN
         'Helper schema: runtime USAGE only; temporary reader CREATE removed'
     );
 
-    -- Current foundation deliberately grants no ordinary application-table access.
+    -- Location reads are intentional now; all other tables remain inaccessible.
+    PERFORM pg_temp.record_check(
+        has_table_privilege('operations_hub_runtime', 'public.locations', 'SELECT')
+        AND NOT has_table_privilege(
+            'operations_hub_runtime', 'public.locations',
+            'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN'
+        )
+        AND NOT has_any_column_privilege(
+            'operations_hub_runtime', 'public.locations', 'INSERT,UPDATE,REFERENCES'
+        ), 'Runtime: locations SELECT only, no write privileges'
+    );
     FOREACH table_name IN ARRAY ARRAY[
-        'organizations', 'users', 'brands', 'locations', 'roles',
+        'organizations', 'users', 'brands', 'roles',
         'permissions', 'role_permissions', 'user_roles', 'user_locations'
     ] LOOP
         PERFORM pg_temp.record_check(
