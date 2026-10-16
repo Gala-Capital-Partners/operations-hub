@@ -21,5 +21,8 @@
     "build:server": "npm run build --workspace=server",
     "build": "npm run build --workspaces",
     "check": "npm run lint && npm run typecheck:server && npm run build"
+  },
+  "devDependencies": {
+    "supabase": "^2.121.0"
   }
 }
