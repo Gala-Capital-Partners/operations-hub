@@ -13,6 +13,14 @@ Optional: copy `.env.example` to `.env` to change `PORT` or `CORS_ORIGIN` (defau
 
 Production build: `npm run build:server && npm run start:server`.
 
+## Tests
+
+```bash
+npm run test:server       # from the repo root (CI runs this on every pull request)
+```
+
+API integration tests live in `test/` and use [Vitest](https://vitest.dev) + [Supertest](https://github.com/ladjs/supertest) against `createApp()` — no server process or port needed. The in-memory store is reset before each test. Case IDs in test names (e.g. `API-04`) refer to `docs/QA.md`.
+
 ## Task model
 
 ```ts
