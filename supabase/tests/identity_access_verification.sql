@@ -1,5 +1,5 @@
 -- Run this entire file against local Supabase PostgreSQL 17+ as postgres,
--- after migrations 1-5. The runtime now has SELECT on locations only;
+-- after migrations 1-6. The runtime now has SELECT on locations and users;
 -- other application tables and all writes remain inaccessible.
 -- Use one connection for the entire file so identity cleanup is meaningful.
 -- CLI: psql <local-connection> -X -v ON_ERROR_STOP=1 -f <this-file>
@@ -244,7 +244,7 @@ BEGIN
         'Helper schema: runtime USAGE only; temporary reader CREATE removed'
     );
 
-    -- Location reads are intentional now; all other tables remain inaccessible.
+    -- Location and profile reads are intentional; other tables remain inaccessible.
     PERFORM pg_temp.record_check(
         has_table_privilege('operations_hub_runtime', 'public.locations', 'SELECT')
         AND NOT has_table_privilege(
@@ -255,8 +255,16 @@ BEGIN
             'operations_hub_runtime', 'public.locations', 'INSERT,UPDATE,REFERENCES'
         ), 'Runtime: locations SELECT only, no write privileges'
     );
+    PERFORM pg_temp.record_check(
+        has_table_privilege('operations_hub_runtime', 'public.users', 'SELECT')
+        AND NOT has_table_privilege('operations_hub_runtime', 'public.users',
+            'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+        AND NOT has_any_column_privilege('operations_hub_runtime', 'public.users',
+            'INSERT,UPDATE,REFERENCES'),
+        'Runtime: users SELECT only, no write privileges'
+    );
     FOREACH table_name IN ARRAY ARRAY[
-        'organizations', 'users', 'brands', 'roles',
+        'organizations', 'brands', 'roles',
         'permissions', 'role_permissions', 'user_roles', 'user_locations'
     ] LOOP
         PERFORM pg_temp.record_check(
@@ -271,7 +279,7 @@ BEGIN
         );
     END LOOP;
 
-    -- Reader may select only id and is_active from users, with no writes.
+    -- Reader may select only id, organization_id, and is_active from users, with no writes.
     FOR column_name IN
         SELECT attname FROM pg_catalog.pg_attribute
         WHERE attrelid = 'public.users'::regclass
@@ -280,7 +288,7 @@ BEGIN
         PERFORM pg_temp.record_check(
             has_column_privilege(
                 'operations_hub_auth_reader', 'public.users', column_name, 'SELECT'
-            ) = (column_name IN ('id', 'is_active'))
+            ) = (column_name IN ('id', 'organization_id', 'is_active'))
             AND NOT has_column_privilege(
                 'operations_hub_auth_reader', 'public.users', column_name,
                 'INSERT,UPDATE,REFERENCES'
@@ -386,13 +394,12 @@ BEGIN
         );
     END LOOP;
 
-    -- Privilege metadata is backed by actual denied operations.
-    BEGIN
-        PERFORM id FROM public.users LIMIT 1;
-        RAISE EXCEPTION 'FAIL: runtime directly read users';
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM pg_temp.record_check(true, 'Runtime direct users SELECT denied');
-    END;
+    -- Profile reads now succeed, but missing identity must return zero rows.
+    PERFORM set_config('app.user_id', '', true);
+    PERFORM pg_temp.record_check(
+        NOT EXISTS (SELECT 1 FROM public.users),
+        'Runtime users SELECT without identity returns no profiles'
+    );
 
     BEGIN
         EXECUTE 'SET LOCAL ROLE operations_hub_auth_reader';
