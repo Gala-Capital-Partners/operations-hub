@@ -1,5 +1,5 @@
 -- Run this entire file against local Supabase PostgreSQL 17+ as postgres,
--- after migrations 1-7. Runtime reads locations, users, and assignments;
+-- after migrations 1-8. Runtime has RLS-controlled reads on all identity tables;
 -- other application tables and all writes remain inaccessible.
 -- Use one connection for the entire file so identity cleanup is meaningful.
 -- CLI: psql <local-connection> -X -v ON_ERROR_STOP=1 -f <this-file>
@@ -244,7 +244,7 @@ BEGIN
         'Helper schema: runtime USAGE only; temporary reader CREATE removed'
     );
 
-    -- Location, profile and assignment reads are intentional; other tables remain inaccessible.
+    -- All identity-table reads are intentional now; writes remain inaccessible.
     PERFORM pg_temp.record_check(
         has_table_privilege('operations_hub_runtime', 'public.locations', 'SELECT')
         AND NOT has_table_privilege(
@@ -274,18 +274,15 @@ BEGIN
         );
     END LOOP;
     FOREACH table_name IN ARRAY ARRAY[
-        'organizations', 'brands', 'roles',
-        'permissions', 'role_permissions'
+        'organizations', 'brands', 'roles', 'permissions', 'role_permissions'
     ] LOOP
         PERFORM pg_temp.record_check(
-            NOT has_table_privilege(
-                'operations_hub_runtime', format('public.%I', table_name),
-                'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN'
-            )
-            AND NOT has_any_column_privilege(
-                'operations_hub_runtime', format('public.%I', table_name),
-                'SELECT,INSERT,UPDATE,REFERENCES'
-            ), 'Foundation runtime: no direct privileges on ' || table_name
+            has_table_privilege('operations_hub_runtime', 'public.' || table_name, 'SELECT')
+            AND NOT has_table_privilege('operations_hub_runtime', 'public.' || table_name,
+                'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+            AND NOT has_any_column_privilege('operations_hub_runtime', 'public.' || table_name,
+                'INSERT,UPDATE,REFERENCES'),
+            'Runtime: read-only directory/catalog table ' || table_name
         );
     END LOOP;
 
