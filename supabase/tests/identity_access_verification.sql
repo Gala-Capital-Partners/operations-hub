@@ -1,5 +1,5 @@
 -- Run this entire file against local Supabase PostgreSQL 17+ as postgres,
--- after migrations 1-6. The runtime now has SELECT on locations and users;
+-- after migrations 1-7. Runtime reads locations, users, and assignments;
 -- other application tables and all writes remain inaccessible.
 -- Use one connection for the entire file so identity cleanup is meaningful.
 -- CLI: psql <local-connection> -X -v ON_ERROR_STOP=1 -f <this-file>
@@ -244,7 +244,7 @@ BEGIN
         'Helper schema: runtime USAGE only; temporary reader CREATE removed'
     );
 
-    -- Location and profile reads are intentional; other tables remain inaccessible.
+    -- Location, profile and assignment reads are intentional; other tables remain inaccessible.
     PERFORM pg_temp.record_check(
         has_table_privilege('operations_hub_runtime', 'public.locations', 'SELECT')
         AND NOT has_table_privilege(
@@ -263,9 +263,19 @@ BEGIN
             'INSERT,UPDATE,REFERENCES'),
         'Runtime: users SELECT only, no write privileges'
     );
+    FOREACH table_name IN ARRAY ARRAY['user_roles', 'user_locations'] LOOP
+        PERFORM pg_temp.record_check(
+            has_table_privilege('operations_hub_runtime', 'public.' || table_name, 'SELECT')
+            AND NOT has_table_privilege('operations_hub_runtime', 'public.' || table_name,
+                'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+            AND NOT has_any_column_privilege('operations_hub_runtime', 'public.' || table_name,
+                'INSERT,UPDATE,REFERENCES'),
+            'Runtime: read-only assignments in ' || table_name
+        );
+    END LOOP;
     FOREACH table_name IN ARRAY ARRAY[
         'organizations', 'brands', 'roles',
-        'permissions', 'role_permissions', 'user_roles', 'user_locations'
+        'permissions', 'role_permissions'
     ] LOOP
         PERFORM pg_temp.record_check(
             NOT has_table_privilege(

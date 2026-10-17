@@ -1,4 +1,4 @@
--- LOCAL Supabase, after migrations 1-6; run the whole file as postgres.
+-- LOCAL Supabase, after migrations 1-7; run the whole file as postgres.
 -- psql <local-connection> -X -v ON_ERROR_STOP=1 -f <this-file>
 -- Fixtures use postgres. Assertions use runtime and query the protected table.
 -- All fixture data, catalog changes and temporary membership roll back.
@@ -154,17 +154,19 @@ DO $$ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN PERFORM pg_temp.profile_check(true,'Profile INSERT denied'); END;
 END $$;
 SELECT pg_temp.expect_profiles('brand_admin',ARRAY['brand_admin','org_admin','manager','employee_a','employee_b','inactive_target','no_read'],
-    'Brand directory access does not imply assignment-table access');
-DO $$ BEGIN
-    BEGIN
-        PERFORM 1 FROM public.user_roles;
-        RAISE EXCEPTION 'Assignment SELECT unexpectedly succeeded';
-    EXCEPTION WHEN insufficient_privilege THEN PERFORM pg_temp.profile_check(true,'user_roles still inaccessible'); END;
-    BEGIN
-        PERFORM 1 FROM public.user_locations;
-        RAISE EXCEPTION 'Assignment SELECT unexpectedly succeeded';
-    EXCEPTION WHEN insufficient_privilege THEN PERFORM pg_temp.profile_check(true,'user_locations still inaccessible'); END;
-END $$;
+    'Brand directory access is separate from assignment scope');
+-- Directory visibility must not expose the org admin's organization grant.
+SELECT pg_temp.profile_check(
+    (SELECT count(*) = 1 FROM public.user_roles)
+    AND NOT EXISTS (SELECT 1 FROM public.user_roles
+                    WHERE user_id <> pg_temp.pid('brand_admin')),
+    'Brand directory access does not expose organization or other-brand roles');
+SELECT pg_temp.profile_check(
+    (SELECT count(*) = 6 FROM public.user_locations)
+    AND NOT EXISTS (SELECT 1 FROM public.user_locations
+                    WHERE brand_id <> pg_temp.pid('brand_a')
+                       OR location_id = pg_temp.pid('store_off')),
+    'Brand assignment reads stay inside active brand locations');
 
 -- Administrative fixture changes are not application write-authorization tests.
 RESET ROLE;
