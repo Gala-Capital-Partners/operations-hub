@@ -183,6 +183,58 @@ try:
                 + actor('admin') + set_assignment(), check=False)
         assert r.returncode != 0 and 'require READ COMMITTED' in r.stderr, r.stderr
     print('PASS: unsupported isolation levels rejected', flush=True)
+    # Organization/brand entry points share the lock with location writes.
+    def user_role_call(operation, target, role, brand):
+        brand_sql = "NULL" if brand is None else "'" + ids[brand] + "'"
+        return (f"SELECT identity_access.{operation}_user_role("
+                f"'{ids[target]}',(SELECT id FROM public.roles WHERE key='{role}'),"
+                f"{brand_sql},gen_random_uuid());")
+
+    for role, brand in [('org_admin', None), ('brand_admin', 'brand')]:
+        body = ('SET LOCAL ROLE operations_hub_runtime;\n' + actor('admin')
+                + user_role_call('grant', 'target', role, brand))
+        a = open_a(body)
+        b = competing(body, 'duplicate-' + role)
+        finish_a(a)
+        out, err = b.communicate(timeout=15)
+        assert b.returncode == 0 and 'unchanged' in out, (out, err)
+        scope = 'organization' if brand is None else 'brand'
+        assert sql(f"SELECT count(*) FROM public.user_roles WHERE user_id='{ids['target']}' "
+                   f"AND role_scope='{scope}';").stdout.strip() == '1'
+        assert sql(f"SELECT count(*) FROM identity_access.assignment_audit_log "
+                   f"WHERE target_user_id='{ids['target']}' AND assignment_scope='{scope}' "
+                   "AND action='grant';").stdout.strip() == '1'
+        print('PASS: concurrent ' + role + ' grants create one assignment/audit event', flush=True)
+        sql('BEGIN; SET LOCAL ROLE operations_hub_runtime;' + actor('admin')
+            + user_role_call('revoke', 'target', role, brand) + 'COMMIT;')
+
+    # Real role-revocation functions must invalidate waiting writers, including
+    # location writes whose authority came from a brand assignment.
+    for role, brand in [('org_admin', None), ('brand_admin', 'brand')]:
+        sql('BEGIN; SET LOCAL ROLE operations_hub_runtime;' + actor('admin')
+            + user_role_call('grant', 'manager', role, brand) + 'COMMIT;')
+        a = open_a('SET LOCAL ROLE operations_hub_runtime;' + actor('admin')
+                   + user_role_call('revoke', 'manager', role, brand))
+        waiting_write = (user_role_call('grant', 'target', 'brand_admin', 'brand')
+                         if role == 'org_admin' else set_assignment())
+        audit_before = sql('SELECT count(*) FROM identity_access.assignment_audit_log;').stdout.strip()
+        b = competing('SET LOCAL ROLE operations_hub_runtime;' + actor('manager')
+                      + waiting_write, 'revoked-' + role)
+        finish_a(a)
+        out, err = b.communicate(timeout=15)
+        assert b.returncode != 0 and 'Assignment change is not authorized' in err, (out, err)
+        assert sql(f"SELECT count(*) FROM public.user_roles WHERE user_id='{ids['target']}';").stdout.strip() == '0'
+        assert sql(f"SELECT count(*) FROM public.user_locations WHERE user_id='{ids['target']}';").stdout.strip() == '0'
+        # Only session A's committed revoke adds an event; denied B adds none.
+        assert int(sql('SELECT count(*) FROM identity_access.assignment_audit_log;').stdout.strip()) == int(audit_before) + 1
+        print('PASS: revoked ' + role + ' authority blocks waiting writer', flush=True)
+
+    for isolation in ['REPEATABLE READ', 'SERIALIZABLE']:
+        for operation in ['grant', 'revoke']:
+            r = sql(f'BEGIN ISOLATION LEVEL {isolation}; SET LOCAL ROLE operations_hub_runtime;'
+                    + actor('admin') + user_role_call(operation, 'target', 'org_admin', None), check=False)
+            assert r.returncode != 0 and 'require READ COMMITTED' in r.stderr, r.stderr
+    print('PASS: organization/brand writes reject unsupported isolation levels', flush=True)
 finally:
     for proc in sessions:
         if proc.poll() is None:
