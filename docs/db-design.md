@@ -1,6 +1,6 @@
 # Identity and Access Database Design
 
-**Status:** Approved initial permission matrices; database implementation in progress. Nine migrations implement the core schema, permission catalog, scoped reads, and audited location-assignment writes. Database regression and concurrency checks have passed in local isolated testing. Express integration and the remaining lifecycle workflows are pending; these changes have not been deployed to the shared Supabase database.
+**Status:** Approved initial permission matrices; database implementation in progress. Ten migrations implement the core schema, permission catalog, scoped reads, and audited location, brand, and organization assignment writes. Database regression and concurrency checks have passed in local isolated testing. Express integration and the remaining lifecycle workflows are pending; these changes have not been deployed to the shared Supabase database.
 
 **Target:** PostgreSQL 17 for the current migrations and local test environment, Supabase Auth, Express + TypeScript, and Next.js. Although `UNIQUE NULLS NOT DISTINCT` requires only PostgreSQL 15+, the role-membership options in the access migrations require PostgreSQL 16+.
 
@@ -21,7 +21,7 @@ Task and checklist tables are designed separately. They will reference brands, l
 - Composite foreign keys ensure the user and target brand belong to the same organization, and the target location belongs to that brand.
 - Roles and permissions are shared reference data, changed only through reviewed migrations. Assigning existing roles to users is a separate, permission-controlled operation.
 - An assigned role cannot be deleted. Its assignments must first be explicitly removed or reassigned through an authorized, audited process.
-- Users, brands, and locations are normally deactivated rather than deleted. Assignment tables represent current access. The location-assignment write functions record their changes in an audit log; auditing other lifecycle changes remains pending.
+- Users, brands, and locations are normally deactivated rather than deleted. Assignment tables represent current access. The assignment write functions record their changes in an audit log; auditing account lifecycle changes remains pending.
 
 ## Access examples
 
@@ -38,7 +38,7 @@ Promotion from brand administrator to organization administrator adds an organiz
 
 ## Approved initial permission matrix
 
-**Review status:** Ali approved the permission matrices with two changes: Location Managers may invite users and assign or revoke Employee roles within locations they manage. The catalog contains four roles, eleven permissions, and thirty-two role-permission mappings. Scoped identity reads and location-assignment writes are implemented and tested. A catalog grant alone does not implement its feature: invitations, account deactivation, organization/brand assignment writes, and task workflows still need their respective implementation and tests.
+**Review status:** Ali approved the permission matrices with two changes: Location Managers may invite users and assign or revoke Employee roles within locations they manage. The catalog contains four roles, eleven permissions, and thirty-two role-permission mappings. Scoped identity reads and assignment writes at all three scopes are implemented and tested. A catalog grant alone does not implement its feature: invitations, account deactivation/reactivation, and task workflows still need their respective implementation and tests.
 
 ### How to read the matrix
 
@@ -100,7 +100,7 @@ This matrix defines which existing role assignments an actor may grant, replace,
 - Changes to the actor's own assignments are denied through the ordinary assignment-management flow. Bootstrap and account-recovery procedures are separate and must be documented.
 - Proposed protection, not yet implemented or approved: do not allow the last active Organization Admin to be deactivated or lose their final organization-admin assignment. Concurrent changes must not bypass this invariant.
 - The role catalog has no numeric hierarchy. Authority comes from the explicit matrix, not a comparison such as “higher than my role.”
-- Location-assignment writes record grants, replacements, and revocations with the actor, target, and old/new role IDs. Organization/brand assignment auditing remains pending.
+- Location-assignment writes record grants, replacements, and revocations with the actor, target, and old/new role IDs. Organization/brand assignment writes record grants and revocations in the same audit table.
 - The matrix checks the assignment being changed, not every other role held by its recipient. For example, a Brand Admin may assign an Employee role at an authorized store to another user who also holds an Organization Admin role. This does not remove or reduce that user's organization permissions. Self-assignment changes remain denied.
 
 ### Example authorization decisions
@@ -327,7 +327,7 @@ Deleting an assigned role fails and leaves its assignments and permission links 
 
 The Auth foreign key prevents physical deletion of an Auth user while the application profile exists. Setting `public.users.is_active = false` denies application access; it does not itself disable Supabase authentication or revoke Auth sessions. Auth account deletion and data retention need a separate approved lifecycle procedure.
 
-Deactivation preserves entity records, but it does not preserve overwritten or deleted assignments. The location-assignment audit log has no foreign keys, so its records survive deletion of referenced users, roles, locations, or assignments. It records changes through the authorized write functions; it does not automatically audit privileged direct SQL or cascades.
+Deactivation preserves entity records, but it does not preserve overwritten or deleted assignments. The assignment audit log has no foreign keys, so its records survive deletion of referenced users, roles, locations, or assignments. It records changes through the authorized write functions; it does not automatically audit privileged direct SQL or cascades.
 
 ### Indexes
 
@@ -384,34 +384,68 @@ Both functions use `SECURITY DEFINER`, owned by `operations_hub_assignment_write
 
 The functions check the role-assignment matrix, organization consistency, and the ban on self-changes. The writer's RLS policies also check assignment authority: UPDATE checks both the old role with `USING` and the proposed role with `WITH CHECK`. Grants and replacements require an active target user, brand, and location. Revocation can remove an inactive target's assignment if the caller still has effective authority. An unchanged assignment creates no audit event.
 
-Each successful change inserts into `identity_access.assignment_audit_log` in the same transaction. An audit failure rolls back the assignment change. Records contain the actor, organization, target user, location, action, old/new role IDs, request ID, and occurrence time. The request ID supports correlation; it is not an idempotency key. Application roles cannot update or delete audit records. Privileged database owners can still modify them, so this is not a tamper-proof audit store. An application-facing, scoped audit-read path is not implemented yet.
+Each successful change inserts into `identity_access.assignment_audit_log` in the same transaction. An audit failure rolls back the assignment change. Records contain the actor, organization, target user, assignment scope, target brand or location, action, old/new role IDs, request ID, and occurrence time. The request ID supports correlation; it is not an idempotency key. Application roles cannot update or delete audit records. Privileged database owners can still modify them, so this is not a tamper-proof audit store. An application-facing, scoped audit-read path is not implemented yet.
+
+### Organization and brand assignment writes
+
+`identity_access.grant_user_role(target_user_id, role_id, brand_id, request_id)` and `identity_access.revoke_user_role(target_user_id, role_id, brand_id, request_id)` are backend-callable SQL functions owned by the same restricted writer role. Only an active Organization Admin with `role_assignments.manage` may change another user's assignments within the same organization. Brand Admins and location roles cannot manage these assignments.
+
+The private `can_manage_user_role()` helper validates the role and target: `org_admin` requires a null brand, and `brand_admin` requires a brand in the target user's organization. `user_role_target()` resolves activity and organization information without granting authority. RLS independently checks INSERT and DELETE authority; the writer has no UPDATE privilege on `user_roles`.
+
+A grant requires an active target user and, for brand assignments, an active brand. An authorized duplicate returns `unchanged` without an audit event; the nullable brand is compared using `IS NOT DISTINCT FROM`. Revocation may clean up inactive targets, but missing and forbidden assignments both raise an authorization error. Other assignments remain intact. Promotion is an explicit grant and optional revoke, which callers can perform in one transaction when both must succeed together.
+
+The shared audit table now records `assignment_scope` and an optional `brand_id`. Its target constraint permits exactly these shapes:
+
+| Assignment scope | `brand_id` | `location_id` |
+| --- | --- | --- |
+| Organization | NULL | NULL |
+| Brand | Required | NULL |
+| Location | NULL | Required |
+
+Here `brand_id` identifies a brand assignment, not a historical brand snapshot for location events. Scope defaults to `location` to preserve existing location records and write functions. The table remains internal and has no application-facing read path yet.
 
 ### Concurrency contract for identity writers
 
-Location-assignment functions call `identity_access.lock_assignment_organization()` before resolving targets or checking write authority. It takes a transaction-scoped advisory lock for the caller's organization and rechecks the caller's active identity after waiting. These writes require `READ COMMITTED`; stronger snapshot isolation levels are rejected so later checks can see changes committed while waiting.
+All four assignment-write functions call `identity_access.lock_assignment_organization()` before resolving targets or checking write authority. It takes a transaction-scoped advisory lock for the caller's organization and rechecks the caller's active identity after waiting. These writes require `READ COMMITTED`; stronger snapshot isolation levels are rejected so later checks can see changes committed while waiting.
 
-**All future writers that can change this authorization decision must use the same organization lock before checks and writes.** This includes organization/brand assignment changes and user, brand, or location deactivation. The lock is cooperative: it does not automatically stop privileged SQL or functions that omit it. Catalog migrations and administrative repairs must be coordinated with active identity writes. Ordinary reads do not take this lock.
+**All future writers that can change this authorization decision must use the same organization lock before checks and writes.** Organization/brand assignment writes already follow this contract; future user, brand, or location deactivation must do so too. The lock is cooperative: it does not automatically stop privileged SQL or functions that omit it. Catalog migrations and administrative repairs must be coordinated with active identity writes. Ordinary reads do not take this lock.
 
-The current concurrency tests cover duplicate grants, a waiting manager losing authority, and a waiting caller being deactivated. Deactivation is simulated by a cooperating test transaction; the production deactivation workflow is still pending. This lock alone does not implement the proposed last-active-Organization-Admin safeguard.
+The current concurrency tests cover duplicate grants at all three scopes, waiting writers losing location-manager, Brand Admin, or Organization Admin authority, and a waiting caller being deactivated. Deactivation is simulated by a cooperating test transaction; the production deactivation workflow is still pending. This lock alone does not implement the proposed last-active-Organization-Admin safeguard.
 
 ### Activity and history
 
 Inactive users must lose application access on subsequent requests even if their JWT has not expired. Role changes must be evaluated from current assignments rather than relying solely on stale JWT role claims.
 
-Current permission resolution excludes brand grants for inactive brands and location grants for inactive brands or locations. Location discovery excludes inactive stores. Organization grants remain organization-scoped; each resource policy or write function must still enforce its target's activity rules. Authorized assignment cleanup is allowed as described above. Historical reporting access remains a separate company-review item, not an implemented reporting path.
+Current permission resolution excludes brand grants for inactive brands and location grants for inactive brands or locations. Location discovery excludes inactive stores. Organization grants remain organization-scoped; each resource policy or write function must still enforce its target's activity rules. Authorized assignment cleanup is allowed as described above. Active users may still inspect their own retained assignments to inactive targets; assignment visibility does not make those permissions effective. Historical reporting access remains a separate company-review item, not an implemented reporting path.
+
+## Pending account-lifecycle and audit decisions
+
+The following are proposals for company confirmation, not approved permissions or completed migrations. They do not block review of the tested assignment foundation:
+
+| Decision | Proposed default |
+| --- | --- |
+| Deactivating other admins | Organization Admins may deactivate another user in their organization, including another Organization Admin; self-deactivation is denied. |
+| Reactivation authority | Add `users.reactivate` for Organization Admins. The current catalog still contains only the eleven approved permissions. |
+| Access after reactivation | Preserve assignments and restore eligible access; show the administrator the access that will be restored. |
+| Administrator continuity | Preserve at least one active Organization Admin through controlled lifecycle and assignment workflows; document separate bootstrap and recovery procedures. |
+| Application versus Auth status | Block subsequent protected operations after deactivation commits. Decide separately whether to disable Auth login or revoke sessions; an existing transaction may finish. |
+| Inactive-resource history | Keep current operational restrictions and authorized cleanup. Confirm whether a separate historical reporting path is needed and who can use it. |
+| Audit visibility and retention | Organization Admins read their own organization's audit records, no application edits/deletes, and no automatic deletion until retention is agreed. Confirm whether narrower admins need access. |
+
+The existing active-caller and no-self-change rules protect against removing the caller's own admin assignment through the controlled functions. They are not a universal guarantee against privileged SQL, account deletion, or future lifecycle paths. Those paths need coordinated safeguards and tests. External technical recommendations do not substitute for company approval of these business rules.
 
 ## Lifecycle work outside the nine-table core
 
 - **Invitations:** define authorized provisioning, acceptance, expiration, retries, and activation. An `invitations` table is proposed if tracking these states is required. New profiles without assignments require a controlled provisioning path.
 - **Email synchronization:** Supabase Auth owns login email. Choose and test synchronization into `users.email`, including existing-user reconciliation and failed updates. Identity and assignments always use UUIDs.
-- **Audit history:** location-assignment write auditing is implemented. Extend auditing to organization/brand assignment changes, deactivation, and permission-catalog changes; define scoped audit reads, retention, and the actor convention for system jobs.
+- **Audit history:** assignment write auditing is implemented at all three scopes. Extend auditing to deactivation/reactivation and permission-catalog changes; define scoped audit reads, retention, and the actor convention for system jobs.
 - **Timezones:** validate supported IANA names and decide how location timezone changes affect future task generation and existing task instances.
 
-These remaining workflows are not completed by the existing location-assignment migration.
+These remaining workflows are not completed by the existing assignment-write migrations.
 
 ## Required validation before handoff
 
-The eight SQL verification files and disposable concurrency harness cover the implemented database paths, including 108 location-assignment write checks. Fresh-database testing applies all nine migrations transactionally as a non-superuser migration role. These checks do not replace real Supabase Auth, Express, pooler, or future feature integration tests. A separate migration README will document setup and test execution once the migration work is complete. The following is the full handoff checklist, including work still pending:
+The nine SQL verification files and disposable concurrency harness cover the implemented database paths. Fresh-database testing applies all ten migrations transactionally as a non-superuser migration role. These checks do not replace real Supabase Auth, Express, pooler, or future feature integration tests. See the [Supabase README](../supabase/README.md) for local setup, migration order, and test execution. The following is the full handoff checklist, including work still pending:
 
 - Reject cross-organization assignments, wrong-brand locations, wrong-scope roles, and duplicate assignments, including organization assignments with null brand IDs.
 - Reject deletion of a role referenced by either assignment table; allow deliberate deletion of an unassigned role and cleanup of its permission links.
