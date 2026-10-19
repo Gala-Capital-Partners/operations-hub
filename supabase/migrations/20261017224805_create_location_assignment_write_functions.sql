@@ -449,7 +449,9 @@ BEGIN
     );
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Target is unavailable or not authorized'
+        -- Match the authorization failure below so callers cannot infer
+        -- whether a hidden user/location pair exists from the message.
+        RAISE EXCEPTION 'Assignment change is not authorized'
             USING ERRCODE = '42501';
     END IF;
 

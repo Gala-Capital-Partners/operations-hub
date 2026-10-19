@@ -124,11 +124,13 @@ GRANT operations_hub_runtime TO postgres WITH INHERIT FALSE, SET TRUE;
 -- Test harness is SECURITY INVOKER. Switching to runtime exercises exactly
 -- the application entry point; checks after RESET ROLE can inspect audit rows.
 CREATE FUNCTION pg_temp.try_assignment(actor text,target text,loc text,role_key text,
- operation text,expected text,label text,missing_request boolean DEFAULT false)
+ operation text,expected text,label text,missing_request boolean DEFAULT false,
+ expected_message text DEFAULT NULL)
 RETURNS void LANGUAGE plpgsql SECURITY INVOKER AS $$
 DECLARE actor_id uuid:=pg_temp.pid(actor); target_id uuid:=pg_temp.pid(target);
  loc_id uuid:=pg_temp.pid(loc); requested_role uuid; req uuid:=gen_random_uuid();
- result text; err text; before_rows jsonb; before_audit jsonb; after_rows jsonb; after_audit jsonb;
+ result text; err text; err_message text;
+ before_rows jsonb; before_audit jsonb; after_rows jsonb; after_audit jsonb;
  old_role uuid; actual_role uuid; audit_row identity_access.assignment_audit_log%ROWTYPE;
  audit_count bigint;
 BEGIN
@@ -147,7 +149,8 @@ BEGIN
    result:=identity_access.revoke_location_assignment(target_id,loc_id,
      CASE WHEN missing_request THEN NULL ELSE req END);
   END IF;
- EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS err=RETURNED_SQLSTATE;
+ EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS err=RETURNED_SQLSTATE, err_message=MESSAGE_TEXT;
  END;
  EXECUTE 'RESET ROLE';
  IF expected IN ('granted','replaced','unchanged','revoked') THEN
@@ -174,9 +177,39 @@ BEGIN
   SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY user_id,location_id),'[]') INTO after_rows FROM public.user_locations t;
   SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY id),'[]') INTO after_audit FROM identity_access.assignment_audit_log t;
   PERFORM pg_temp.wcheck(err=expected,label||': expected SQLSTATE '||expected);
+  IF expected_message IS NOT NULL THEN
+   PERFORM pg_temp.wcheck(err_message=expected_message,label||': expected error message');
+  END IF;
   PERFORM pg_temp.wcheck(before_rows=after_rows AND before_audit=after_audit,label||': no partial change');
  END IF;
 END $$;
+
+-- Regression: SQLSTATE alone did not catch the target-existence disclosure.
+-- For both an employee and an active unassigned caller, hidden existing,
+-- missing, and cross-organization targets must produce the SAME message.
+-- The harness also verifies that every rejected call leaves rows/audit intact.
+INSERT INTO profile_ids(key) VALUES ('missing_user'),('missing_store'),('foreign_store');
+INSERT INTO public.locations(id,brand_id,name,timezone)
+VALUES (pg_temp.pid('foreign_store'),pg_temp.pid('brand_foreign'),'Foreign test store','UTC');
+DO $$ DECLARE caller text; target_case record; BEGIN
+ FOREACH caller IN ARRAY ARRAY['employee_a','onboarding'] LOOP
+  FOR target_case IN SELECT * FROM (VALUES
+   ('employee_c','store_c','existing hidden pair'),
+   ('missing_user','store_c','missing user'),
+   ('employee_c','missing_store','missing location'),
+   ('missing_user','missing_store','both missing'),
+   ('foreign_admin','store_c','foreign user'),
+   ('employee_c','foreign_store','foreign location'),
+   ('foreign_admin','foreign_store','existing foreign pair')
+  ) AS cases(target_user,target_location,description) LOOP
+   PERFORM pg_temp.try_assignment(caller,target_case.target_user,
+    target_case.target_location,'employee','set','42501',
+    'No existence disclosure: '||caller||' / '||target_case.description,
+    false,'Assignment change is not authorized');
+  END LOOP;
+ END LOOP;
+END $$;
+
 SELECT pg_temp.try_assignment(NULL,'onboarding','store_a','employee','set','42501','Missing actor');
 SELECT pg_temp.try_assignment('malformed','onboarding','store_a','employee','set','42501','Malformed actor');
 SELECT pg_temp.try_assignment('no_profile','onboarding','store_a','employee','set','42501','No profile');
