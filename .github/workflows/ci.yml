@@ -31,6 +31,28 @@ jobs:
       - run: npm run typecheck:server
       - run: npm run build:server
 
+  database:
+    name: Database (migrations + RLS tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Same tag as the harness default in supabase/tests/location_assignment_concurrency.py,
+      # pulled from Docker Hub because anonymous ECR Public pulls hit data limits on shared runners.
+      POSTGRES_IMAGE: supabase/postgres:17.11.0.004
+    steps:
+      - uses: actions/checkout@v6
+
+      # The harness never downloads images itself (docker run --pull=never).
+      - name: Pull Postgres image
+        run: |
+          for attempt in 1 2 3; do
+            docker pull "$POSTGRES_IMAGE" && exit 0
+            echo "Pull failed (attempt $attempt); retrying in 15s"
+            sleep 15
+          done
+          exit 1
+      - run: python3 supabase/tests/location_assignment_concurrency.py --image "$POSTGRES_IMAGE"
+
   frontend:
     name: Frontend (lint + build)
     runs-on: ubuntu-latest
