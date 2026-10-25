@@ -6,7 +6,7 @@ Internal operations platform for a multi-brand restaurant franchisor.
 | --------- | -------------------------------- |
 | `client/` | Next.js 16 + React 19 frontend   |
 | `server/` | Express 5 + TypeScript API       |
-| `docs/`   | Requirements and dev workflow    |
+| `docs/`   | Requirements, dev workflow, QA   |
 
 ## Quick start
 
@@ -18,4 +18,15 @@ npm run dev:server     # terminal 1 → http://localhost:4000
 npm run dev:client     # terminal 2 → http://localhost:3000
 ```
 
-See [docs/README.md](docs/README.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+## Before opening a pull request
+
+```bash
+npm run check          # frontend lint + backend typecheck + full build (same as CI)
+```
+
+## Docs
+
+- [docs/README.md](docs/README.md) — requirements and architecture
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — branches, pull requests, environment variables
+- [docs/db-design.md](docs/db-design.md) — identity and access database design (draft)
+- [docs/QA.md](docs/QA.md) — manual and API test checklist
