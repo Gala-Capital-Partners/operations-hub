@@ -1,11 +1,11 @@
 # Identity and Access Database Design
 
-**Status:** Draft for company review. Migrations and authorization policies have not been implemented or tested.
+**Status:** Approved initial permission matrices; database implementation in progress. Ten migrations implement the core schema, permission catalog, scoped reads, and audited location, brand, and organization assignment writes. Database regression and concurrency checks have passed in local isolated testing. Express integration and the remaining lifecycle workflows are pending; these changes have not been deployed to the shared Supabase database.
 
-**Target:** PostgreSQL 15+, Supabase Auth, Express + TypeScript, and Next.js.
+**Target:** PostgreSQL 17 for the current migrations and local test environment, Supabase Auth, Express + TypeScript, and Next.js. Although `UNIQUE NULLS NOT DISTINCT` requires only PostgreSQL 15+, the role-membership options in the access migrations require PostgreSQL 16+.
 
 ## Purpose and scope
-There are nine application tables. Supabase's existing `auth.users` table is shown as `auth_users` for reference; the project does not create or manage its schema.
+There are nine core application tables, shown in the diagram below, plus the internal `identity_access.assignment_audit_log` described in the write-access section. Supabase's existing `auth.users` table is shown as `auth_users` for reference; the project does not create or manage its schema.
 
 Task and checklist tables are designed separately. They will reference brands, locations, and users and follow the same consistency and access conventions. Production deployment is outside the capstone scope.
 
@@ -21,11 +21,11 @@ Task and checklist tables are designed separately. They will reference brands, l
 - Composite foreign keys ensure the user and target brand belong to the same organization, and the target location belongs to that brand.
 - Roles and permissions are shared reference data, changed only through reviewed migrations. Assigning existing roles to users is a separate, permission-controlled operation.
 - An assigned role cannot be deleted. Its assignments must first be explicitly removed or reassigned through an authorized, audited process.
-- Users, brands, and locations are normally deactivated rather than deleted. Assignment tables represent current access; historical role changes require the planned audit log.
+- Users, brands, and locations are normally deactivated rather than deleted. Assignment tables represent current access. The assignment write functions record their changes in an audit log; auditing account lifecycle changes remains pending.
 
 ## Access examples
 
-These examples use the proposed roles defined in the matrices below. The matrices require company review.
+These examples use the initial roles approved in the matrices below.
 
 | Person | Assignment | Storage | Access boundary |
 | --- | --- | --- | --- |
@@ -36,9 +36,9 @@ These examples use the proposed roles defined in the matrices below. The matrice
 
 Promotion from brand administrator to organization administrator adds an organization assignment. Remove the old brand assignment if the promotion is intended to replace it; otherwise it remains effective and must be considered during later demotion. The user's identity does not change.
 
-## Proposed permission matrix
+## Approved initial permission matrix
 
-**Review status:** Proposed initial-release behavior for Ali and the company to confirm. These rows specify intended access; they do not claim that the corresponding endpoints or policies are implemented.
+**Review status:** Ali approved the permission matrices with two changes: Location Managers may invite users and assign or revoke Employee roles within locations they manage. The catalog contains four roles, eleven permissions, and thirty-two role-permission mappings. Scoped identity reads and assignment writes at all three scopes are implemented and tested. A catalog grant alone does not implement its feature: invitations, account deactivation/reactivation, and task workflows still need their respective implementation and tests.
 
 ### How to read the matrix
 
@@ -58,10 +58,10 @@ The proposed role keys are `org_admin`, `brand_admin`, `location_manager`, and `
 | --- | --- | --- | --- | --- |
 | View locations — `locations.read` | Organization | Brand | Location | Location |
 | View user profiles — `users.read` | Organization | Brand | Location | Self |
-| Invite users — `users.invite` | Organization | Brand | Denied | Denied |
+| Invite users — `users.invite` | Organization | Brand | Location | Denied |
 | Deactivate application accounts — `users.deactivate` | Organization | Denied | Denied | Denied |
 | View role assignments — `role_assignments.read` | Organization | Brand | Location | Own location assignment only |
-| Grant, replace, or revoke role assignments — `role_assignments.manage` | Organization, subject to role-assignment matrix | Brand, subject to role-assignment matrix | Denied | Denied |
+| Grant, replace, or revoke role assignments — `role_assignments.manage` | Organization, subject to role-assignment matrix | Brand, subject to role-assignment matrix | Location, Employee assignments only; subject to role-assignment matrix | Denied |
 | Create/edit recurring task definitions — `tasks.manage` | Organization | Brand | Location | Denied |
 | View daily task instances — `task_instances.read` | Organization | Brand | Location | Location |
 | Mark task instances complete — `task_instances.complete` | Denied | Denied | Location | Location |
@@ -82,7 +82,7 @@ The proposed role keys are `org_admin`, `brand_admin`, `location_manager`, and `
 
 Role definitions, permission definitions, and `role_permissions` are changed only through reviewed migrations. No application role receives runtime permission to edit that catalog. Authorized administrators can assign existing roles according to the next matrix.
 
-## Proposed role-assignment matrix
+## Approved initial role-assignment matrix
 
 This matrix defines which existing role assignments an actor may grant, replace, or revoke. Both `role_assignments.manage` and the matching matrix entry are required. The targets must also satisfy the database organization, brand, location, and scope constraints.
 
@@ -90,7 +90,7 @@ This matrix defines which existing role assignments an actor may grant, replace,
 | --- | --- | --- | --- | --- |
 | Organization Admin | Within assigned organization | Within assigned organization | Within assigned organization | Within assigned organization |
 | Brand Admin | Denied | Denied | Stores within assigned brand | Stores within assigned brand |
-| Location Manager | Denied | Denied | Denied | Denied |
+| Location Manager | Denied | Denied | Denied | Stores where the actor holds a Location Manager role |
 | Employee | Denied | Denied | Denied | Denied |
 
 ### Assignment safeguards
@@ -98,9 +98,10 @@ This matrix defines which existing role assignments an actor may grant, replace,
 - Validate the existing assignment when revoking or replacing it, and the proposed assignment when granting or replacing it. An update must not move an otherwise allowed assignment into an unauthorized scope or target.
 - A new permission does not take effect until the assignment change commits. Permission checks use the actor's existing authority, never the authority they are attempting to grant themselves.
 - Changes to the actor's own assignments are denied through the ordinary assignment-management flow. Bootstrap and account-recovery procedures are separate and must be documented.
-- Proposed protection: do not allow the last active Organization Admin to be deactivated or lose their final organization-admin assignment. Concurrent changes must not bypass this invariant.
+- Proposed protection, not yet implemented or approved: do not allow the last active Organization Admin to be deactivated or lose their final organization-admin assignment. Concurrent changes must not bypass this invariant.
 - The role catalog has no numeric hierarchy. Authority comes from the explicit matrix, not a comparison such as “higher than my role.”
-- Record grants, replacements, and revocations in the planned audit log with the actor, target, and before/after state.
+- Location-assignment writes record grants, replacements, and revocations with the actor, target, and old/new role IDs. Organization/brand assignment writes record grants and revocations in the same audit table.
+- The matrix checks the assignment being changed, not every other role held by its recipient. For example, a Brand Admin may assign an Employee role at an authorized store to another user who also holds an Organization Admin role. This does not remove or reduce that user's organization permissions. Self-assignment changes remain denied.
 
 ### Example authorization decisions
 
@@ -324,9 +325,9 @@ All foreign keys use `ON UPDATE RESTRICT`. Moving entities between organizations
 
 Deleting an assigned role fails and leaves its assignments and permission links intact. Deleting an unassigned role removes its `role_permissions` links. Deleting a permission removes its grants and is therefore a security-sensitive catalog migration requiring review.
 
-The Auth foreign key prevents physical deletion of an Auth user while the application profile exists. Setting `app.users.is_active = false` denies application access; it does not itself disable Supabase authentication or revoke Auth sessions. Auth account deletion and data retention need a separate approved lifecycle procedure.
+The Auth foreign key prevents physical deletion of an Auth user while the application profile exists. Setting `public.users.is_active = false` denies application access; it does not itself disable Supabase authentication or revoke Auth sessions. Auth account deletion and data retention need a separate approved lifecycle procedure.
 
-Deactivation preserves entity records, but it does not preserve overwritten or deleted assignments. The planned audit log must record these changes and must not disappear through cascades from users, roles, or locations.
+Deactivation preserves entity records, but it does not preserve overwritten or deleted assignments. The assignment audit log has no foreign keys, so its records survive deletion of referenced users, roles, locations, or assignments. It records changes through the authorized write functions; it does not automatically audit privileged direct SQL or cascades.
 
 ### Indexes
 
@@ -343,26 +344,26 @@ Each referencing foreign key needs a suitable index unless an existing primary-k
 
 The composite unique constraints above create additional indexes. Final query plans should be checked using realistic seed data and the application database role.
 
-## Planned authorization and RLS approach
+## Authorization and RLS implementation
 
 ### Scope and action checks
 
 - `current_user_brand_ids()` returns accessible brands based on organization, brand, and location assignments.
-- `current_user_location_ids()` returns accessible stores. Organization and brand assignments cover their respective stores; location assignments cover only their assigned stores.
+- `current_readable_location_ids()` returns stores covered by the caller's effective `locations.read` grants. Organization and brand assignments cover their respective active stores; location assignments cover only their assigned active stores.
 - Brand-owned records use the accessible-brand boundary. Location-owned records additionally use the accessible-location boundary.
 - A location assignment makes the brand discoverable but does not grant visibility of every store or every category of data in that brand.
 - `users`, `organizations`, and organization-scoped `user_roles` require separate visibility policies because they cannot be filtered directly by a non-null `brand_id`.
-- Any effective-permissions view retains user, permission, scope, organization, brand, and location. Permissions must not be flattened into an unscoped list.
+- `current_user_permissions()` returns role, permission, scope, organization, brand, and location for the current active caller. Permissions must not be flattened into an unscoped list.
 - The API checks action permissions against the resource's actual target, resolved from trusted data. The role-grant matrix must define which roles each administrator may assign and at which scope.
 - SELECT, INSERT, UPDATE, and DELETE policies are designed separately. Updates validate existing rows with `USING` and proposed rows with `WITH CHECK`.
-- No operation receives runtime grants until its authorization path is defined. Missing identity or assignments must not grant access.
+- No operation receives runtime grants until its authorization path is defined. Missing or inactive identity grants no access. Active users without assignments retain only the defined onboarding reads: their own profile, their organization, and the shared role/permission catalog.
 
 ### Trusted request context and helpers
 
-- Express verifies the JWT and sets `app.user_id` transaction-locally on the same checked-out database connection used for permission checks and application queries.
+- Required Express integration (pending): verify the JWT and set `app.user_id` transaction-locally on the same checked-out database connection used for permission checks and application queries.
 - The runtime role does not own tables, has no `BYPASSRLS`, and cannot become the helper-owner role. RLS tests run as this runtime role.
 - RLS helpers are `STABLE`, with controlled `SECURITY DEFINER` ownership, a fixed search path, fully qualified object names, and restricted execution grants.
-- The helper owner must be able to read authorization tables without recursively invoking their policies. A dedicated `NOLOGIN` role with narrowly limited SELECT privileges and `BYPASSRLS` is the proposed approach, subject to verification in the company's Supabase environment.
+- The helper owner reads authorization tables without recursively invoking their policies. `operations_hub_auth_reader` is a dedicated `NOLOGIN`, `BYPASSRLS` role with narrowly limited column-level SELECT privileges. Ownership and grants have been tested locally; hosted environment verification remains pending.
 - Internal helpers accepting arbitrary user IDs are not exposed to the runtime role or browser. Public policy helpers derive the caller from verified request context.
 - Any permissions view uses `security_invoker = true` unless a separately reviewed definer design is required. Views and helpers must not reintroduce policy recursion.
 - The application still filters queries by the requested authorized brand and location; RLS provides a second boundary.
@@ -370,22 +371,81 @@ The composite unique constraints above create additional indexes. Final query pl
 
 Application database credentials are backend-only. The database trusts Express to set the actor correctly; the session setting is not an independently authenticated credential.
 
+### Location-assignment writes
+
+The backend runtime can execute two functions in the private `identity_access` schema through its SQL connection. These are not browser-facing Supabase RPC endpoints:
+
+| Function | Behavior |
+| --- | --- |
+| `set_location_assignment(target_user_id, target_location_id, target_role_id, request_id)` | Grants or replaces a location role; returns `granted`, `replaced`, or `unchanged` |
+| `revoke_location_assignment(target_user_id, target_location_id, request_id)` | Removes an authorized existing assignment; returns `revoked`. Missing and forbidden assignments produce the same authorization error. |
+
+Both functions use `SECURITY DEFINER`, owned by `operations_hub_assignment_writer`. This role cannot log in, does not own the tables, and cannot bypass RLS. The runtime cannot become this role or directly modify assignments or audit records. Internal authorization and target-resolution helpers are executable only by the roles that need them.
+
+The functions check the role-assignment matrix, organization consistency, and the ban on self-changes. The writer's RLS policies also check assignment authority: UPDATE checks both the old role with `USING` and the proposed role with `WITH CHECK`. Grants and replacements require an active target user, brand, and location. Revocation can remove an inactive target's assignment if the caller still has effective authority. An unchanged assignment creates no audit event.
+
+Each successful change inserts into `identity_access.assignment_audit_log` in the same transaction. An audit failure rolls back the assignment change. Records contain the actor, organization, target user, assignment scope, target brand or location, action, old/new role IDs, request ID, and occurrence time. The request ID supports correlation; it is not an idempotency key. Application roles cannot update or delete audit records. Privileged database owners can still modify them, so this is not a tamper-proof audit store. An application-facing, scoped audit-read path is not implemented yet.
+
+### Organization and brand assignment writes
+
+`identity_access.grant_user_role(target_user_id, role_id, brand_id, request_id)` and `identity_access.revoke_user_role(target_user_id, role_id, brand_id, request_id)` are backend-callable SQL functions owned by the same restricted writer role. Only an active Organization Admin with `role_assignments.manage` may change another user's assignments within the same organization. Brand Admins and location roles cannot manage these assignments.
+
+The private `can_manage_user_role()` helper validates the role and target: `org_admin` requires a null brand, and `brand_admin` requires a brand in the target user's organization. `user_role_target()` resolves activity and organization information without granting authority. RLS independently checks INSERT and DELETE authority; the writer has no UPDATE privilege on `user_roles`.
+
+A grant requires an active target user and, for brand assignments, an active brand. An authorized duplicate returns `unchanged` without an audit event; the nullable brand is compared using `IS NOT DISTINCT FROM`. Revocation may clean up inactive targets, but missing and forbidden assignments both raise an authorization error. Other assignments remain intact. Promotion is an explicit grant and optional revoke, which callers can perform in one transaction when both must succeed together.
+
+The shared audit table now records `assignment_scope` and an optional `brand_id`. Its target constraint permits exactly these shapes:
+
+| Assignment scope | `brand_id` | `location_id` |
+| --- | --- | --- |
+| Organization | NULL | NULL |
+| Brand | Required | NULL |
+| Location | NULL | Required |
+
+Here `brand_id` identifies a brand assignment, not a historical brand snapshot for location events. Scope defaults to `location` to preserve existing location records and write functions. The table remains internal and has no application-facing read path yet.
+
+### Concurrency contract for identity writers
+
+All four assignment-write functions call `identity_access.lock_assignment_organization()` before resolving targets or checking write authority. It takes a transaction-scoped advisory lock for the caller's organization and rechecks the caller's active identity after waiting. These writes require `READ COMMITTED`; stronger snapshot isolation levels are rejected so later checks can see changes committed while waiting.
+
+**All future writers that can change this authorization decision must use the same organization lock before checks and writes.** Organization/brand assignment writes already follow this contract; future user, brand, or location deactivation must do so too. The lock is cooperative: it does not automatically stop privileged SQL or functions that omit it. Catalog migrations and administrative repairs must be coordinated with active identity writes. Ordinary reads do not take this lock.
+
+The current concurrency tests cover duplicate grants at all three scopes, waiting writers losing location-manager, Brand Admin, or Organization Admin authority, and a waiting caller being deactivated. Deactivation is simulated by a cooperating test transaction; the production deactivation workflow is still pending. This lock alone does not implement the proposed last-active-Organization-Admin safeguard.
+
 ### Activity and history
 
 Inactive users must lose application access on subsequent requests even if their JWT has not expired. Role changes must be evaluated from current assignments rather than relying solely on stale JWT role claims.
 
-Proposed behavior for inactive brands and locations: block operational writes and ordinary operational access, while allowing historical reads only through an explicitly authorized reporting path. Reviewer confirmation is required before finalizing those policies.
+Current permission resolution excludes brand grants for inactive brands and location grants for inactive brands or locations. Location discovery excludes inactive stores. Organization grants remain organization-scoped; each resource policy or write function must still enforce its target's activity rules. Authorized assignment cleanup is allowed as described above. Active users may still inspect their own retained assignments to inactive targets; assignment visibility does not make those permissions effective. Historical reporting access remains a separate company-review item, not an implemented reporting path.
+
+## Pending account-lifecycle and audit decisions
+
+The following are proposals for company confirmation, not approved permissions or completed migrations. They do not block review of the tested assignment foundation:
+
+| Decision | Proposed default |
+| --- | --- |
+| Deactivating other admins | Organization Admins may deactivate another user in their organization, including another Organization Admin; self-deactivation is denied. |
+| Reactivation authority | Add `users.reactivate` for Organization Admins. The current catalog still contains only the eleven approved permissions. |
+| Access after reactivation | Preserve assignments and restore eligible access; show the administrator the access that will be restored. |
+| Administrator continuity | Preserve at least one active Organization Admin through controlled lifecycle and assignment workflows; document separate bootstrap and recovery procedures. |
+| Application versus Auth status | Block subsequent protected operations after deactivation commits. Decide separately whether to disable Auth login or revoke sessions; an existing transaction may finish. |
+| Inactive-resource history | Keep current operational restrictions and authorized cleanup. Confirm whether a separate historical reporting path is needed and who can use it. |
+| Audit visibility and retention | Organization Admins read their own organization's audit records, no application edits/deletes, and no automatic deletion until retention is agreed. Confirm whether narrower admins need access. |
+
+The existing active-caller and no-self-change rules protect against removing the caller's own admin assignment through the controlled functions. They are not a universal guarantee against privileged SQL, account deletion, or future lifecycle paths. Those paths need coordinated safeguards and tests. External technical recommendations do not substitute for company approval of these business rules.
 
 ## Lifecycle work outside the nine-table core
 
 - **Invitations:** define authorized provisioning, acceptance, expiration, retries, and activation. An `invitations` table is proposed if tracking these states is required. New profiles without assignments require a controlled provisioning path.
 - **Email synchronization:** Supabase Auth owns login email. Choose and test synchronization into `users.email`, including existing-user reconciliation and failed updates. Identity and assignments always use UUIDs.
-- **Audit history:** a planned `audit_log` records assignment changes, deactivation, and permission-catalog changes, including actor, target, before/after values, timestamp, and request ID. Runtime users cannot directly forge, update, or delete audit records. System jobs need an explicit actor convention.
+- **Audit history:** assignment write auditing is implemented at all three scopes. Extend auditing to deactivation/reactivation and permission-catalog changes; define scoped audit reads, retention, and the actor convention for system jobs.
 - **Timezones:** validate supported IANA names and decide how location timezone changes affect future task generation and existing task instances.
 
-These workflows are not represented as completed migrations in this proposal.
+These remaining workflows are not completed by the existing assignment-write migrations.
 
 ## Required validation before handoff
+
+The nine SQL verification files and disposable concurrency harness cover the implemented database paths. Fresh-database testing applies all ten migrations transactionally as a non-superuser migration role. These checks do not replace real Supabase Auth, Express, pooler, or future feature integration tests. See the [Supabase README](../supabase/README.md) for local setup, migration order, and test execution. The following is the full handoff checklist, including work still pending:
 
 - Reject cross-organization assignments, wrong-brand locations, wrong-scope roles, and duplicate assignments, including organization assignments with null brand IDs.
 - Reject deletion of a role referenced by either assignment table; allow deliberate deletion of an unassigned role and cleanup of its permission links.
@@ -404,7 +464,7 @@ These workflows are not represented as completed migrations in this proposal.
 
 ## Open questions for company review
 
-1. Please approve or adjust the proposed permission and role-assignment matrices. Does organization scope represent the requested higher-level access across all Gala brands? Are both brand switching and consolidated reporting needed?
+1. The initial matrices are approved. Are additional roles or changes needed, including restrictions on assigning a location role to someone who also holds a broader role? Are both brand switching and consolidated reporting needed?
 2. Should employees complete every task at an assigned store, or only tasks personally assigned to them? The current proposal allows store-level completion and reserves reopening for location managers.
 3. Should Organization and Brand Admins be able to complete or reopen store tasks without an additional location role? The current proposal does not grant these actions through their broader roles.
 4. Is the proposed user-directory visibility correct: own profile for employees, shared-store profiles for managers, and profiles with relevant access for brand administrators? Should Brand Admins ever grant or revoke other Brand Admin assignments?
@@ -413,4 +473,4 @@ These workflows are not represented as completed migrations in this proposal.
 7. Which timezone names are accepted, and how should timezone changes affect checklist scheduling?
 8. What audit retention and account-deletion procedures does the company require?
 
-After review, translate the approved matrices into role-permission seed data, role-grant rules, and authorization tests alongside the versioned migrations. The diagram alone is not evidence that constraints or policies have been implemented or tested.
+Keep approved matrix changes synchronized with the catalog migrations, authorization rules, and tests. Before handoff, complete the pending workflows and integration checks and obtain review of the security-sensitive SQL. The diagram alone is not evidence that constraints or policies have been implemented or tested.
