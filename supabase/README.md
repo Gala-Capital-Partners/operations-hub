@@ -102,6 +102,8 @@ The harness:
 
 It does not connect to your local project database or shared Supabase project. Its minimal synthetic `auth.users` table supports database-only tests; it does not test real Supabase Auth, Express token verification, or connection-pool behavior. Those require separate integration tests.
 
+CI runs this harness on every pull request in the **Database (migrations + RLS tests)** job (`.github/workflows/ci.yml`). The job pulls the same image tag from Docker Hub (`supabase/postgres`), because anonymous ECR Public pulls hit data limits on shared runners, then passes it with `--image`. If you change the default image tag in the harness, update `POSTGRES_IMAGE` in the workflow too.
+
 ## Backend integration contract
 
 - Express must verify the Supabase access token and derive the actor from the verified identity, never a client-supplied user ID.
