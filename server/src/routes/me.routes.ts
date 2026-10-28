@@ -51,27 +51,47 @@ function toMeResponse(rows: MeRows) {
   }
 }
 
-export function createMeRouter(deps: { pool: Pool; requireAuth: RequestHandler }) {
+/**
+ * GET /api/me: returns the signed-in user's profile, scoped permissions,
+ * and the brands and locations they can access.
+ *
+ * Used by the frontend after login to build navigation and location pickers.
+ * Dependencies are passed in so the router can be tested without real
+ * Supabase or database connections.
+ */
+export function createMeRouter(
+  deps: { pool: Pool; requireAuth: RequestHandler }
+) {
   const router = Router()
+  // requireAuth verifies the access token and sets res.locals.actorId.
   router.get('/', deps.requireAuth, async (_req, res) => {
-    const result = await withUserTransaction(deps.pool, res.locals.actorId, async (db) => {
-      const profile = await db.query(PROFILE_SQL)
-      if (profile.rowCount === 0) return null
-      const [permissions, brands, locations] = [
-        await db.query(PERMISSIONS_SQL),
-        await db.query(BRANDS_SQL),
-        await db.query(LOCATIONS_SQL),
-      ]
-      return {
-        profile: profile.rows[0],
-        permissions: permissions.rows,
-        brands: brands.rows,
-        locations: locations.rows
+    const result = await withUserTransaction(
+      deps.pool,
+      res.locals.actorId,
+      async (db) => {
+        const profile = await db.query(PROFILE_SQL)
+        if (profile.rowCount === 0) return null
+        const [permissions, brands, locations] = [
+          await db.query(PERMISSIONS_SQL),
+          await db.query(BRANDS_SQL),
+          await db.query(LOCATIONS_SQL),
+        ]
+        return {
+          profile: profile.rows[0],
+          permissions: permissions.rows,
+          brands: brands.rows,
+          locations: locations.rows
+        }
       }
-    })
+    )
 
     if (!result) {
-      res.status(403).json({ error: { code: 'PROFILE_NOT_FOUND', message: 'No active application profile' } })
+      res.status(403).json({ error:
+        {
+          code: 'PROFILE_NOT_FOUND',
+          message: 'No active application profile'
+        }
+      })
       return
     }
     res.json(toMeResponse(result))   // map snake_case → camelCase
