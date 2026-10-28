@@ -52,6 +52,20 @@ jobs:
           done
           exit 1
       - run: python3 supabase/tests/location_assignment_concurrency.py --image "$POSTGRES_IMAGE"
+  backend-test:
+    name: Backend (tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+      - run: npm run test:server
 
   frontend:
     name: Frontend (lint + build)

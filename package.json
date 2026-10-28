@@ -20,7 +20,8 @@
     "build:client": "npm run build --workspace=client",
     "build:server": "npm run build --workspace=server",
     "build": "npm run build --workspaces",
-    "check": "npm run lint && npm run typecheck:server && npm run build"
+    "check": "npm run lint && npm run typecheck:server && npm run test:server && npm run build",
+    "test:server": "npm run test --workspace=server"
   },
   "devDependencies": {
     "supabase": "^2.121.0"
