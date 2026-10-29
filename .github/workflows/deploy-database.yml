@@ -1,0 +1,82 @@
+name: Deploy database
+
+# Applies pending Supabase migrations to the shared project after they reach main.
+# See supabase/README.md → "Deploying to the shared project".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only list pending migrations; apply nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Never cancel a deploy partway through; queue the next one instead.
+concurrency:
+  group: deploy-database
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Keep in sync with the database job in ci.yml.
+      POSTGRES_IMAGE: supabase/postgres:17.11.0.004
+    steps:
+      - uses: actions/checkout@v6
+
+      # Re-run the harness on the exact commit being deployed, including direct pushes to main.
+      - name: Pull Postgres image
+        run: |
+          for attempt in 1 2 3; do
+            docker pull "$POSTGRES_IMAGE" && exit 0
+            echo "Pull failed (attempt $attempt); retrying in 15s"
+            sleep 15
+          done
+          exit 1
+      - run: python3 supabase/tests/location_assignment_concurrency.py --image "$POSTGRES_IMAGE"
+
+  deploy:
+    name: Deploy migrations to Supabase
+    needs: verify
+    # Manual runs can target any branch; only main may reach the shared project.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Holds SUPABASE_DB_URL. Admins can add required reviewers to this environment.
+    environment: supabase-shared
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Supabase CLI version comes from the root package-lock.json.
+      - run: npm ci
+
+      - name: Check deploy secret
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL is not set on the supabase-shared environment. See supabase/README.md."
+            exit 1
+          fi
+
+      - name: List pending migrations
+        run: npx supabase db push --db-url "$SUPABASE_DB_URL" --skip-vault --dry-run
+
+      - name: Apply migrations
+        if: github.event_name == 'push' || inputs.dry_run == false
+        run: npx supabase db push --db-url "$SUPABASE_DB_URL" --skip-vault --yes
