@@ -121,3 +121,21 @@ CI runs this harness on every pull request in the **Database (migrations + RLS t
 Before opening the PR, review the migration diff, run relevant tests, and record results and remaining work. Keep unfinished lifecycle files and real credentials out of the change. Confirm that documentation distinguishes approved rules from proposals awaiting company answers.
 
 Review and merge precede applying these changes to the shared Supabase project. Coordinate the target project, current schema/history, PostgreSQL version, recovery plan, and team timing before deployment. Passing disposable tests is not authorization to push schema changes to the shared project. Verify hosted role grants and application behavior separately afterward.
+
+## Deploying to the shared project
+
+`.github/workflows/deploy-database.yml` applies migrations to the shared Supabase project. Merging a migration into `main` is therefore the deployment decision, so the coordination above happens during PR review.
+
+- **Trigger:** a push to `main` that changes `supabase/migrations/**`. Other merges do not deploy.
+- **Verify first:** the workflow re-runs the disposable-database harness on the exact commit. The deploy job runs only if it passes.
+- **Deploy:** `supabase db push` lists the pending migrations, then applies them and records them in the project's migration history. Migrations already applied are skipped. A remote history that does not match `migrations/` stops the push before anything is applied.
+- **No overlap:** deploys queue one after another and are never cancelled partway through.
+- **Not included:** seed data, vault secrets, `supabase/setup/` scripts, and roll-backs. There are no down migrations; fix forward with a new migration.
+
+### One-time setup (repository admin)
+
+1. Create the `supabase-shared` environment under **Settings → Environments**. The first workflow run also creates it if it does not exist. Set **Deployment branches** to `main` only. The workflow already refuses other branches, and this setting also keeps the secret away from them. Optionally add required reviewers so each deploy waits for approval.
+2. Add an environment secret `SUPABASE_DB_URL`, using the **Session pooler** connection string from the Supabase dashboard (**Connect → Session pooler**, port 5432) with the database password filled in and percent-encoded. GitHub runners are IPv4-only, so the direct connection does not work, and the transaction pooler (port 6543) does not support migrations.
+3. Before the first real deploy, run **Actions → Deploy database → Run workflow** with *dry run* checked. Confirm the listed migrations match what the shared project is missing. If the project already has tables or migration history created outside this folder, resolve that first.
+
+To deploy manually, for example after fixing the secret, run the workflow with *dry run* unchecked.

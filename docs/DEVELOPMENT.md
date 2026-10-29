@@ -64,7 +64,9 @@ Do not use privileged credentials unless they are actually required.
 
 GitHub Actions should test the frontend and backend and run the relevant build checks on pull requests. All required tests and build checks must pass before merging into `main`.
 
-Vercel handles deployment through the existing GitHub integration. Changes merged into `main` trigger a Vercel build and, if successful, update the hosted application. A separate GitHub Actions deployment job is not needed.
+Vercel handles deployment through the existing GitHub integration. Changes merged into `main` trigger a Vercel build and, if successful, update the hosted application. A separate GitHub Actions deployment job is not needed for the applications.
+
+Database migrations are the exception: merging a change under `supabase/migrations/` into `main` runs the **Deploy database** workflow, which applies the migrations to the shared Supabase project. See [Supabase README](../supabase/README.md#deploying-to-the-shared-project).
 
 Vercel's build does not replace application tests. Resolve any failed build or deployment before considering the change complete.
 
