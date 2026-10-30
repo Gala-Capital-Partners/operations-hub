@@ -99,6 +99,14 @@ Errors use `{"error":{"message":"..."}}`. The profile error also includes a code
 
 Clients should obtain a fresh token or prompt sign-in for 401, show an application-access message for 403, and offer retry for service failures. Never interpret an authentication-service failure as a successful login.
 
+## Route and controller responsibilities
+
+`app.ts` mounts the `/api/me` router. `src/routes/me.routes.ts` connects the GET route to `requireAuth`, then to the handler returned by `createGetMeController(pool)`.
+
+`src/controller/me.controller.ts` owns the profile/access queries, response mapping, and the 403 response for a missing active profile. It receives the pool through its factory and reads the verified actor ID from `res.locals.actorId`; it does not create connections or authenticate tokens itself. Database operations run through `withUserTransaction`, and unexpected errors propagate to the application error handler.
+
+When adding a protected route, attach authentication before the controller and pass dependencies into the controller factory. Keep URL/middleware wiring in the router and request-handling behavior in the controller. The existing Tasks routes have not yet been moved into controllers.
+
 ## Writing protected database operations
 
 Use the helpers in `src/db/transaction.ts` with an actor ID supplied by verified authentication:
@@ -129,7 +137,7 @@ npm run build:server
 npm run test:server       # from the repo root (CI runs this on every pull request)
 ```
 
-API integration tests live in `test/` and use [Vitest](https://vitest.dev) + [Supertest](https://github.com/ladjs/supertest) against `createApp()` — no server process or port needed. The in-memory store is reset before each test. Case IDs in test names (e.g. `API-04`) refer to `docs/QA.md`.
+API integration tests live in `test/` and use [Vitest](https://vitest.dev) + [Supertest](https://github.com/ladjs/supertest) against `createApp()` — no separately started backend is needed; Supertest opens a temporary local listener. The in-memory store is reset before each test. Case IDs in test names (e.g. `API-04`) refer to `docs/QA.md`. The current suite covers the Tasks API and health/unknown routes; it does not exercise `/api/me`.
 
 ## Task model
 
@@ -180,7 +188,8 @@ src/
   index.ts                  starts the server
   app.ts                    express app, CORS, JSON, error handling
   routes/tasks.routes.ts    /api/tasks endpoints
-  routes/me.routes.ts       /api/me endpoint
+  routes/me.routes.ts       /api/me routing and authentication wiring
+  controller/me.controller.ts  /api/me queries and response handling
   validation/task.ts        request body validation
   store/task.store.ts       in-memory repository
   data/tasks.seed.ts        mock tasks from the design
