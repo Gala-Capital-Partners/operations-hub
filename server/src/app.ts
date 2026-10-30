@@ -1,8 +1,11 @@
 import cors from 'cors'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import { tasksRouter } from './routes/tasks.routes.js'
+import { Pool } from 'pg';
+import { type RequestHandler } from 'express';
+import { createMeRouter } from './routes/me.routes.js';
 
-export function createApp() {
+export function createApp(deps: { pool?: Pool; requireAuth?: RequestHandler } = {}) {
   const app = express()
 
   const origins = (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
@@ -12,6 +15,10 @@ export function createApp() {
 
   app.use(cors({ origin: origins }))
   app.use(express.json({ limit: '1mb' }))
+
+  if (deps.pool && deps.requireAuth) {
+    app.use('/api/me', createMeRouter({ pool: deps.pool, requireAuth: deps.requireAuth }))
+  }
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok' })
