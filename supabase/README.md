@@ -139,3 +139,35 @@ Review and merge precede applying these changes to the shared Supabase project. 
 3. Before the first real deploy, run **Actions → Deploy database → Run workflow** with *dry run* checked. Confirm the listed migrations match what the shared project is missing. If the project already has tables or migration history created outside this folder, resolve that first.
 
 To deploy manually, for example after fixing the secret, run the workflow with *dry run* unchecked.
+
+## Task schema foundation
+
+`20261031212122_create_task_schema.sql` adds task definitions, per-location daily
+instances, and completion/reopening events. Definitions store a nullable `recurrence_rule` containing an RRULE value (for
+example `FREQ=WEEKLY;BYDAY=MO,WE,FR`). NULL means a one-off on `start_date` and
+requires a null `end_date`. Recurring schedules may have an inclusive `end_date`.
+An instance is unique per definition, location, and local calendar day. See the
+[recurrence storage contract](../docs/task-recurrence.md) for database constraints,
+future application validation requirements, and timezone semantics.
+
+Instances snapshot name, description, category, local due time, and the location's
+IANA timezone so definition/location edits do not rewrite historical instructions. Completion actor IDs reference
+application users. Both completion fields must be null or both populated. Foreign
+keys restrict deletion rather than cascading through task history. Composite
+foreign keys prevent mismatched brands on definitions, instances, and locations.
+
+All three tables have RLS enabled. The runtime role has SELECT on definitions and
+instances, but no read policies yet, so these reads return no rows. It has no task
+write or event-table privileges. This migration does not enable task API access.
+
+Follow-up migrations must implement scoped policies, instance generation, and
+controlled writes. Those paths must enforce same-organization actors,
+location-specific targets, scheduling and resource activity, snapshot copying,
+and atomic state changes with audit events. Creator and completion IDs must come
+from verified identity. Future-instance edits and timezone-change behavior remain
+workflow decisions; schedule columns alone do not implement a scheduler.
+
+`tests/task_schema_verification.sql` covers valid inserts, rejected cross-brand
+relationships, RRULE structural/date/category constraints, duplicate occurrences,
+completion consistency, timestamp triggers, preserved history, and default-deny
+runtime access. The disposable database harness discovers this test automatically.
