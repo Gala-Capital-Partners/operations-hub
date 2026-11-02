@@ -77,13 +77,13 @@ BEGIN
 END;
 $$;
 
--- No task data is accessible until read policies are implemented. Direct writes and access to audit events are not granted.
+-- Without an actor, task reads are denied. Direct writes and audit-event access are not granted.
 GRANT operations_hub_runtime TO postgres WITH INHERIT FALSE, SET TRUE;
 SET LOCAL ROLE operations_hub_runtime;
 DO $$
 BEGIN
     IF EXISTS(SELECT 1 FROM public.task_definitions) OR EXISTS(SELECT 1 FROM public.task_instances) THEN
-        RAISE EXCEPTION 'Task tables must deny reads without policies';
+        RAISE EXCEPTION 'Task tables must deny reads without an actor';
     END IF;
 END;
 $$;

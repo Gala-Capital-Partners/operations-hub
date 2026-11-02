@@ -157,7 +157,10 @@ keys restrict deletion rather than cascading through task history. Composite
 foreign keys prevent mismatched brands on definitions, instances, and locations.
 
 All three tables have RLS enabled. The runtime role has SELECT on definitions and
-instances, but no read policies yet, so these reads return no rows. It has no task
+instances. The subsequent `20261102073803_create_task_read_policies.sql` migration
+allows instance reads only at active locations returned by
+`identity_access.current_location_ids_with('task_instances.read')`. Definitions
+still have no read policy and return no rows. The runtime role has no task
 write or event-table privileges. This migration does not enable task API access.
 
 Follow-up migrations must implement scoped policies, instance generation, and
@@ -171,3 +174,7 @@ workflow decisions; schedule columns alone do not implement a scheduler.
 relationships, RRULE structural/date/category constraints, duplicate occurrences,
 completion consistency, timestamp triggers, preserved history, and default-deny
 runtime access. The disposable database harness discovers this test automatically.
+
+`tests/task_read_policies_verification.sql` verifies task-instance visibility as the
+runtime role across organization, brand, and location scopes, denied identities,
+resource deactivation, and assignment revocation.
