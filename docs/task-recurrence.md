@@ -3,6 +3,16 @@
 Status: database schema foundation only. Recurrence validation, date expansion,
 materialization, and scheduler integration are not implemented in this change.
 
+## Generator quick reference
+
+- Use RRULE for dates and `task_definitions.scheduled_times` for timed slots.
+- All-day mode emits one local-midnight anchor per matching date; timed mode
+  emits one occurrence per configured time, subject to the agreed DST policy.
+- Copy mode, timezone, instructions and numeric requirements into each instance.
+- Reuse the same scheduled instant on retries; never overwrite historical rows.
+- Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
+- Generation and controlled writers remain unimplemented; runtime writes denied.
+
 ## Ownership and scope
 
 GCP's kickoff calls for RRULE recurrence through a library and an idempotent
@@ -23,7 +33,17 @@ interface without prescribing a TypeScript module or library version.
 - `start_date` and optional inclusive `end_date` are local calendar dates between
   2000-01-01 and 2199-12-31. End cannot precede start. One-off tasks require a
   NULL end date.
-- `due_time` is an optional local wall-clock time, separate from recurrence dates.
+- `schedule_mode` is `all_day` (the legacy/default mode) or `timed`.
+- `scheduled_times` is a non-null `time[]`, defaulting to an empty array.
+  Timed definitions need at least one local time; all-day definitions need none.
+  A pure immutable helper checks one dimension, conventional 1-based indexing,
+  no NULL elements, no duplicate times, and no 24:00. Midnight is allowed.
+  Array order has no meaning; sort times when displaying or expanding them.
+- Mode, times and due time must be changed in ONE statement. Immediate CHECKs
+  enforce a valid final row. There are no child-table or schedule triggers.
+- `due_time` is permitted only for all-day definitions; timed definitions require
+  NULL. This avoids assigning one daily deadline to several timed occurrences.
+  Exact all-day overdue/DST behavior and timed deadlines remain future decisions.
 - Instances are unique by `(definition_id, location_id, scheduled_at)`. Multiple
   timed occurrences on the same local date are allowed; equivalent instants with
   different UTC-offset notation still collide.
@@ -85,10 +105,16 @@ behavior. Those require tests alongside their future implementation.
 
 ## Scheduling integration still required
 
-The instance storage now accepts multiple occurrences per day. Definition storage
-still uses a date-only RRULE contract that rejects hourly/time-selector rules.
-Student B and the database owner must agree on DTSTART time, supported frequencies
-or fixed-time lists, and DST gap/fold behavior before broadening that contract.
+Definition storage uses date-only RRULE plus an explicit local-time array. For example,
+`FREQ=DAILY`, mode `timed`, and `scheduled_times = ARRAY[TIME '10:00', TIME '14:00', TIME '18:00']` represent three
+occurrences per matching date at each eligible location. The generator converts
+those local date/time pairs in the location timezone into scheduled instants.
+Hourly RRULEs remain unsupported; fixed times implement the multiple-daily MVP.
+RRULE COUNT counts matching dates in this split model, not the expanded time slots.
+Confirm the UI wording and test that distinction in Student B's generator.
+
+Student B and the database owner must agree on DST gap/fold handling before
+enabling timed generation. Do not silently let a library normalize missing times.
 For a repeated fall-back wall time, storage can distinguish both instants; this
 is not a decision that the generator should produce both. Do not normalize away
 UTC offsets when constructing occurrence identity.
@@ -103,3 +129,28 @@ also prevent unintended mixtures of all-day and timed occurrences for one schedu
 instants, all-day uniqueness, local-date consistency, session-timezone independence,
 and fall-back representation. These tests do not prove recurrence generation or
 end-to-end scheduler idempotency.
+
+## Definition storage verification and access
+
+`task_definition_times_verification.sql` checks mode/array consistency, atomic
+row updates, invalid/duplicate/NULL/multidimensional times, deadline restrictions,
+and denied runtime access. Existing definition RLS and write restrictions apply
+to the new columns. No separate table, cross-row validator, or deferred schedule
+trigger is used. Future controlled APIs must address stale edits (for example,
+optimistic version checks): row constraints prevent invalid schedules, not lost
+updates. The array has no per-slot IDs or metadata; those would warrant revisiting
+a child-table model.
+
+The materializer maps `schedule_mode = 'all_day'` to `is_all_day_snapshot = true`,
+and copies NULL due time for timed occurrences. Existing instance snapshots are
+not rewritten when a definition changes.
+
+This migration replaces an unreleased draft under the same filename. If that
+older child-table draft was applied in a retained database, do not assume migration
+replay upgrades it: rebuild only a disposable database or prepare an explicit
+forward migration preserving its time rows.
+
+Timezone conversions use PostgreSQL's installed timezone rules. A tzdata update
+may change historical conversions and affect CHECK validation during updates or
+restore; verify affected data during timezone-rule upgrades. Stored instants are
+not automatically recalculated.

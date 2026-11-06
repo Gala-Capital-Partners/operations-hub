@@ -214,7 +214,30 @@ both fields explicitly. The database verifies finite instants, matching local
 dates, and all-day anchors; unique keys reject duplicate instants and duplicate
 all-day occurrences. The existing location-based RLS remains applicable.
 
-Definition scheduling and generation still require coordination with Student B:
-the date-only RRULE restriction has not been broadened. See the recurrence
+Definition schedules now pair a date-only RRULE with explicit local times (see below).
+Generation and DST choices still require coordination with Student B. See the recurrence
 storage contract for DST and future-edit limitations. The full task MVP also
 requires controlled write functions; this migration does not enable task writes.
+
+## Definition schedule modes and local times
+
+`20261105223000_add_task_definition_times.sql` adds `schedule_mode` (`all_day` or
+`timed`) and `scheduled_times time[]` to each definition. Existing definitions
+remain all-day with an empty array and keep their due times. Timed definitions
+require a nonempty array of unique, non-null local times and NULL `due_time`.
+All-day definitions require an empty array. Arrays must be one-dimensional with
+1-based indexing; 24:00 is rejected. Array ordering has no scheduling meaning.
+
+For daily occurrences at 10:00, 14:00 and 18:00, store `FREQ=DAILY`, mode `timed`,
+and `ARRAY[TIME '10:00', TIME '14:00', TIME '18:00']`. Update mode, times and due
+time together in one SQL statement. CHECK constraints and a pure validation
+helper enforce the rules on one row, without child tables or deferred triggers.
+
+Runtime definition writes remain denied. The recurrence generator remains Student
+B's responsibility; it maps mode to `is_all_day_snapshot` and must handle timezone
+and DST choices. Scheduled times do not establish visibility cutoffs or timed-task
+deadlines. Controlled writers still need authorization and stale-edit handling.
+
+The migration is an unreleased replacement for the earlier child-table draft.
+Retained databases that applied that draft require a forward migration; this file
+will not automatically rerun. See the recurrence contract for details.
