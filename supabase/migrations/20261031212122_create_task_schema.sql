@@ -18,7 +18,21 @@ CREATE TABLE public.task_definitions (
     is_active boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    -- Numeric-only MVP assumption. Bounds reject invalid input, not abnormal readings.
+    requires_numeric_value boolean NOT NULL DEFAULT false,
+    numeric_unit text,
+    numeric_min numeric,
+    numeric_max numeric,
 
+    CONSTRAINT task_definitions_numeric_disabled_check CHECK (
+        requires_numeric_value OR (numeric_unit IS NULL AND numeric_min IS NULL AND numeric_max IS NULL)
+    ),
+    CONSTRAINT task_definitions_numeric_unit_check CHECK (numeric_unit IS NULL OR numeric_unit ~ '[^[:space:]]'),
+    CONSTRAINT task_definitions_numeric_bounds_check CHECK (numeric_min IS NULL OR numeric_max IS NULL OR numeric_min <= numeric_max),
+    CONSTRAINT task_definitions_numeric_finite_check CHECK (
+        (numeric_min IS NULL OR numeric_min NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric))
+        AND (numeric_max IS NULL OR numeric_max NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric))
+    ),
     CONSTRAINT task_definitions_id_brand_unique UNIQUE (id, brand_id),
     CONSTRAINT task_definitions_brand_fk FOREIGN KEY (brand_id)
         REFERENCES public.brands (id) ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -60,7 +74,39 @@ CREATE TABLE public.task_instances (
     completed_by uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    -- Materialization must explicitly copy the definition configuration.
+    requires_numeric_value_snapshot boolean NOT NULL,
+    numeric_unit_snapshot text,
+    numeric_min_snapshot numeric,
+    numeric_max_snapshot numeric,
+    recorded_value numeric,
 
+    CONSTRAINT task_instances_numeric_disabled_check CHECK (
+        requires_numeric_value_snapshot OR (numeric_unit_snapshot IS NULL AND numeric_min_snapshot IS NULL AND numeric_max_snapshot IS NULL)
+    ),
+    CONSTRAINT task_instances_numeric_unit_check CHECK (numeric_unit_snapshot IS NULL OR numeric_unit_snapshot ~ '[^[:space:]]'),
+    CONSTRAINT task_instances_numeric_bounds_check CHECK (numeric_min_snapshot IS NULL OR numeric_max_snapshot IS NULL OR numeric_min_snapshot <= numeric_max_snapshot),
+    CONSTRAINT task_instances_numeric_finite_check CHECK (
+        (numeric_min_snapshot IS NULL OR numeric_min_snapshot NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric))
+        AND (numeric_max_snapshot IS NULL OR numeric_max_snapshot NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric))
+    ),
+    -- No draft readings: completion, actor and required value are written together.
+    CONSTRAINT task_instances_value_presence_check CHECK (
+        (completed_at IS NULL AND recorded_value IS NULL)
+        OR (completed_at IS NOT NULL AND (
+            (requires_numeric_value_snapshot AND recorded_value IS NOT NULL)
+            OR (NOT requires_numeric_value_snapshot AND recorded_value IS NULL)
+        ))
+    ),
+    CONSTRAINT task_instances_value_finite_check CHECK (
+        recorded_value IS NULL OR recorded_value NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+    ),
+    CONSTRAINT task_instances_value_range_check CHECK (
+        recorded_value IS NULL OR (
+            (numeric_min_snapshot IS NULL OR recorded_value >= numeric_min_snapshot)
+            AND (numeric_max_snapshot IS NULL OR recorded_value <= numeric_max_snapshot)
+        )
+    ),
     CONSTRAINT task_instances_brand_fk FOREIGN KEY (brand_id)
         REFERENCES public.brands (id) ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT task_instances_location_brand_fk FOREIGN KEY (location_id, brand_id)
@@ -82,6 +128,14 @@ CREATE TABLE public.task_instance_events (
     actor_id uuid NOT NULL,
     event_type text NOT NULL,
     occurred_at timestamptz NOT NULL DEFAULT now(),
+    -- Completion events preserve the submitted reading when an instance reopens.
+    -- Reopened events carry no new reading; the earlier completion event retains it.
+    recorded_value numeric,
+
+    CONSTRAINT task_instance_events_value_type_check CHECK (event_type = 'completed' OR recorded_value IS NULL),
+    CONSTRAINT task_instance_events_value_finite_check CHECK (
+        recorded_value IS NULL OR recorded_value NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+    ),
 
     CONSTRAINT task_instance_events_instance_fk FOREIGN KEY (instance_id)
         REFERENCES public.task_instances (id) ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -119,5 +173,6 @@ TO operations_hub_runtime;
 
 -- Still required in authorized write paths: actor/organization checks,
 -- location-specific definition targeting, schedule eligibility, snapshot copying,
+-- numeric configuration copying/immutability, event value matching,
 -- and atomic completion/reopening with append-only audit events. Foreign keys
 -- alone do not implement these business rules.

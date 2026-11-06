@@ -178,3 +178,34 @@ runtime access. The disposable database harness discovers this test automaticall
 `tests/task_read_policies_verification.sql` verifies task-instance visibility as the
 runtime role across organization, brand, and location scopes, denied identities,
 resource deactivation, and assignment revocation.
+
+## Numeric task results (draft MVP contract)
+
+Numeric-only input is a provisional assumption, not sponsor confirmation that
+text will never be needed. Definitions configure `requires_numeric_value`, an
+optional `numeric_unit`, and optional inclusive `numeric_min`/`numeric_max`.
+Bounds are input acceptance limits, not alert thresholds; abnormal temperature
+readings should remain recordable unless an explicit acceptance bound forbids them.
+NaN and infinities are rejected.
+
+The materializer must explicitly copy the requirement, unit, and bounds into each
+instance's snapshot columns. The requirement snapshot intentionally has no default.
+An incomplete instance has no recorded value. A completed numeric instance must
+have one; a completed non-numeric instance must not. Zero and negative decimals
+are supported within any configured bounds. Draft readings are not supported.
+
+Completion events store the submitted `recorded_value`. Reopening must clear the
+instance value and completion fields together, preserving the earlier event.
+Reopened events carry no new value. Future controlled functions must lock the
+instance, authorize the actor, copy the value into the event, and update state
+atomically. Table checks alone do not guarantee an event for every state change,
+or prevent privileged users from rewriting snapshots. Runtime writes remain denied.
+
+`tests/task_numeric_values_verification.sql` covers these structural invariants
+and history preservation with synthetic administrator fixtures. The edited schema
+is a pre-release draft: databases that already applied its earlier version need
+a forward migration or a disposable rebuild; migration replay will not upgrade them.
+
+Multiple occurrences per day remain outstanding: the existing daily uniqueness
+constraint and recurrence restrictions still need a coordinated occurrence-time
+design with Student B before the full task MVP can be considered ready.
