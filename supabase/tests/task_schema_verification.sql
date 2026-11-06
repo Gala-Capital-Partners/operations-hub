@@ -41,8 +41,8 @@ BEGIN
     INSERT INTO public.task_definitions(id,brand_id,location_id,created_by,name,description,category,recurrence_rule,start_date)
         VALUES(def,brand,loc,actor,'Daily work','Instructions','Opening','FREQ=DAILY','2026-11-01'),
               (other_def,other_brand,NULL,actor,'One-off','Instructions','Closing',NULL,'2026-11-01');
-    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot)
-        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles',false);
+    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot,scheduled_at,is_all_day_snapshot)
+        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles',false,'2026-11-01T07:00:00Z',true);
 
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_definitions SET location_id=%L WHERE id=%L',other_loc,def),'23503');
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET location_id=%L WHERE id=%L',other_loc,instance),'23503');
@@ -57,7 +57,7 @@ BEGIN
         PERFORM pg_temp.expect_task_error(format('UPDATE public.task_definitions SET recurrence_rule=%L WHERE id=%L',invalid_rule,def),'23514');
     END LOOP;
     UPDATE public.task_definitions SET recurrence_rule='FREQ=WEEKLY;BYDAY=SU,WE,FR', end_date='2026-12-01' WHERE id=def;
-    PERFORM pg_temp.expect_task_error(format('INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot) VALUES(%L,%L,%L,''2026-11-01'',''Duplicate'','''',''Opening'',''America/Los_Angeles'',false)',brand,loc,def),'23505');
+    PERFORM pg_temp.expect_task_error(format('INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot,scheduled_at,is_all_day_snapshot) VALUES(%L,%L,%L,''2026-11-01'',''Duplicate'','''',''Opening'',''America/Los_Angeles'',false,''2026-11-01T07:00:00Z'',true)',brand,loc,def),'23505');
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET completed_at=now() WHERE id=%L',instance),'23514');
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET completed_by=%L WHERE id=%L',actor,instance),'23514');
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET completed_at=now(), completed_by=%L WHERE id=%L',gen_random_uuid(),instance),'23503');

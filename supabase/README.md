@@ -146,7 +146,8 @@ To deploy manually, for example after fixing the secret, run the workflow with *
 instances, and completion/reopening events. Definitions store a nullable `recurrence_rule` containing an RRULE value (for
 example `FREQ=WEEKLY;BYDAY=MO,WE,FR`). NULL means a one-off on `start_date` and
 requires a null `end_date`. Recurring schedules may have an inclusive `end_date`.
-An instance is unique per definition, location, and local calendar day. See the
+After the occurrence-identity migration, an instance is unique per definition,
+location, and scheduled instant; multiple timed occurrences per day are allowed. See the
 [recurrence storage contract](../docs/task-recurrence.md) for database constraints,
 future application validation requirements, and timezone semantics.
 
@@ -206,6 +207,14 @@ and history preservation with synthetic administrator fixtures. The edited schem
 is a pre-release draft: databases that already applied its earlier version need
 a forward migration or a disposable rebuild; migration replay will not upgrade them.
 
-Multiple occurrences per day remain outstanding: the existing daily uniqueness
-constraint and recurrence restrictions still need a coordinated occurrence-time
-design with Student B before the full task MVP can be considered ready.
+`20261105220000_add_task_occurrence_identity.sql` upgrades instance storage to
+required `scheduled_at` and `is_all_day_snapshot` fields. Existing date-only rows
+become all-day at local midnight with due times unchanged. New writes must supply
+both fields explicitly. The database verifies finite instants, matching local
+dates, and all-day anchors; unique keys reject duplicate instants and duplicate
+all-day occurrences. The existing location-based RLS remains applicable.
+
+Definition scheduling and generation still require coordination with Student B:
+the date-only RRULE restriction has not been broadened. See the recurrence
+storage contract for DST and future-edit limitations. The full task MVP also
+requires controlled write functions; this migration does not enable task writes.

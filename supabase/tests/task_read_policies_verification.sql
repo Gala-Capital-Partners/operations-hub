@@ -67,8 +67,8 @@ BEGIN
     LOOP
         INSERT INTO public.task_definitions(brand_id,location_id,created_by,name,description,category,start_date)
             VALUES(place.brand,place.loc,place.creator,'Read test','','Opening','2026-11-01') RETURNING id INTO def;
-        INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot)
-            VALUES(place.brand,place.loc,def,'2026-11-01','Read test','','Opening','UTC',false);
+        INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot,scheduled_at,is_all_day_snapshot)
+            VALUES(place.brand,place.loc,def,'2026-11-01','Read test','','Opening','UTC',false,'2026-11-01T00:00:00Z',true);
     END LOOP;
     PERFORM pg_temp.assert_task_locations(employee,ARRAY[loc_a]);
     PERFORM pg_temp.assert_task_locations(manager,ARRAY[loc_a]);
