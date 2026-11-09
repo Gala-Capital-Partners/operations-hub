@@ -41,8 +41,8 @@ BEGIN
     INSERT INTO public.task_definitions(id,brand_id,location_id,created_by,name,description,category,recurrence_rule,start_date)
         VALUES(def,brand,loc,actor,'Daily work','Instructions','Opening','FREQ=DAILY','2026-11-01'),
               (other_def,other_brand,NULL,actor,'One-off','Instructions','Closing',NULL,'2026-11-01');
-    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot,scheduled_at,is_all_day_snapshot)
-        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles',false,'2026-11-01T07:00:00Z',true);
+    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,scheduled_at,is_all_day_snapshot)
+        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles','2026-11-01T07:00:00Z',true);
 
     IF NOT EXISTS (SELECT 1 FROM public.task_definitions WHERE id=def
         AND schedule_mode='all_day' AND scheduled_times='{}'::time[]) THEN

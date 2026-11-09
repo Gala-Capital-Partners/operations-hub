@@ -8,7 +8,7 @@ materialization, and scheduler integration are not implemented in this change.
 - Use RRULE for dates and `task_definitions.scheduled_times` for timed slots.
 - All-day mode emits one local-midnight anchor per matching date; timed mode
   emits one occurrence per configured time, subject to the agreed DST policy.
-- Copy mode, timezone, instructions and numeric requirements into each instance.
+- Copy mode, timezone, instructions and numeric units/bounds into each instance.
 - Reuse the same scheduled instant on retries; never overwrite historical rows.
 - Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
 - Generation and controlled writers remain unimplemented; runtime writes denied.
@@ -154,3 +154,14 @@ Timezone conversions use PostgreSQL's installed timezone rules. A tzdata update
 may change historical conversions and affect CHECK validation during updates or
 restore; verify affected data during timezone-rule upgrades. Stored instants are
 not automatically recalculated.
+
+## Completion data
+
+Numeric readings and plain-text notes are independently optional. There is no
+required-reading flag to copy. Continue snapshotting numeric units and bounds;
+validate supplied readings against the snapshots. Notes have a 2000-character
+limit on instances and completion events. Absent notes use NULL; non-NULL notes
+must contain a non-whitespace character. APIs should normalize blank input to
+NULL before persistence. Clearing completion on reopening must
+clear current value and notes without changing earlier events. These fields do
+not affect date/time generation or occurrence identity.

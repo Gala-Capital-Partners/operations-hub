@@ -180,32 +180,36 @@ runtime access. The disposable database harness discovers this test automaticall
 runtime role across organization, brand, and location scopes, denied identities,
 resource deactivation, and assignment revocation.
 
-## Numeric task results (draft MVP contract)
+## Optional task results and notes
 
-Numeric-only input is a provisional assumption, not sponsor confirmation that
-text will never be needed. Definitions configure `requires_numeric_value`, an
-optional `numeric_unit`, and optional inclusive `numeric_min`/`numeric_max`.
-Bounds are input acceptance limits, not alert thresholds; abnormal temperature
-readings should remain recordable unless an explicit acceptance bound forbids them.
-NaN and infinities are rejected.
+Ali confirmed that readings and notes are independently optional for the MVP:
+each completion may contain a numeric reading, plain-text notes, both, or neither. `20261108000000_make_task_results_optional.sql`
+removes the numeric requirement flags and adds nullable `notes` columns to
+instances and events. Existing values, units, bounds and history are preserved.
 
-The materializer must explicitly copy the requirement, unit, and bounds into each
-instance's snapshot columns. The requirement snapshot intentionally has no default.
-An incomplete instance has no recorded value. A completed numeric instance must
-have one; a completed non-numeric instance must not. Zero and negative decimals
-are supported within any configured bounds. Draft readings are not supported.
+Definitions may configure `numeric_unit` and inclusive `numeric_min`/`numeric_max`.
+The materializer copies them to instance snapshots. Bounds apply only when a
+reading is supplied. NaN and infinities are rejected. Bounds are input acceptance
+limits, not alert thresholds; an abnormal temperature is not automatically invalid.
 
-Completion events store the submitted `recorded_value`. Reopening must clear the
-instance value and completion fields together, preserving the earlier event.
-Reopened events carry no new value. Future controlled functions must lock the
-instance, authorize the actor, copy the value into the event, and update state
-atomically. Table checks alone do not guarantee an event for every state change,
-or prevent privileged users from rewriting snapshots. Runtime writes remain denied.
+An incomplete instance has neither recorded value nor notes. Reopening clears
+both together with completion fields; earlier completion events preserve their
+submitted data. Reopened events contain neither a new value nor completion notes.
+A reopening reason, if required later, should be a distinct field.
 
-`tests/task_numeric_values_verification.sql` covers these structural invariants
-and history preservation with synthetic administrator fixtures. The edited schema
-is a pre-release draft: databases that already applied its earlier version need
-a forward migration or a disposable rebuild; migration replay will not upgrade them.
+Notes are optional plain text limited to 2000 characters (an implementation limit).
+Use NULL for absent notes. Empty or whitespace-only non-NULL notes are rejected
+on both instances and events. Future APIs should normalize blank input to NULL;
+meaningful multiline notes retain their formatting. Clients must
+render notes as text, not HTML. Future controlled functions must authorize and
+lock the instance, update state, and copy value/notes into the event atomically.
+Constraints do not themselves guarantee audit insertion or snapshot immutability.
+Runtime writes remain denied; draft completion data is not supported.
+
+`task_numeric_values_verification.sql` and `task_optional_results_verification.sql`
+cover numeric validation, all four optional-input combinations, length limits,
+state consistency, history retention and denied runtime writes. They use synthetic
+administrator fixtures, not a completed API/write-function implementation.
 
 `20261105220000_add_task_occurrence_identity.sql` upgrades instance storage to
 required `scheduled_at` and `is_all_day_snapshot` fields. Existing date-only rows

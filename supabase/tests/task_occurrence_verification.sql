@@ -41,14 +41,14 @@ BEGIN
     INSERT INTO public.task_definitions(id,brand_id,location_id,created_by,name,description,category,recurrence_rule,start_date)
         VALUES(def,brand,loc,actor,'Daily work','Instructions','Opening','FREQ=DAILY','2026-11-01'),
               (other_def,other_brand,NULL,actor,'One-off','Instructions','Closing',NULL,'2026-11-01');
-    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot,scheduled_at,is_all_day_snapshot)
-        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles',false,'2026-11-01T07:00:00Z',true);
+    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,scheduled_at,is_all_day_snapshot)
+        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles','2026-11-01T07:00:00Z',true);
 
     -- Two timed occurrences for the same definition/store/local date.
     UPDATE public.task_instances SET is_all_day_snapshot=false,scheduled_at='2026-11-01T17:00:00Z' WHERE id=instance;
     INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,scheduled_at,is_all_day_snapshot,
-        name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot)
-    VALUES(brand,loc,def,'2026-11-01','2026-11-01T19:00:00Z',false,'Later','','Opening','America/Los_Angeles',false);
+        name_snapshot,description_snapshot,category_snapshot,timezone_snapshot)
+    VALUES(brand,loc,def,'2026-11-01','2026-11-01T19:00:00Z',false,'Later','','Opening','America/Los_Angeles');
     IF (SELECT count(*) FROM public.task_instances WHERE definition_id=def AND location_id=loc) <> 2 THEN
         RAISE EXCEPTION 'Multiple daily occurrences missing';
     END IF;
@@ -65,8 +65,8 @@ BEGIN
     INSERT INTO public.locations(id,brand_id,name,timezone) VALUES(sibling,brand,'Sibling','America/Los_Angeles');
     UPDATE public.task_definitions SET location_id=NULL WHERE id=def;
     INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,scheduled_at,is_all_day_snapshot,
-        name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot)
-    VALUES(brand,sibling,def,'2026-11-01','2026-11-01T17:00:00Z',false,'Sibling','','Opening','America/Los_Angeles',false);
+        name_snapshot,description_snapshot,category_snapshot,timezone_snapshot)
+    VALUES(brand,sibling,def,'2026-11-01','2026-11-01T17:00:00Z',false,'Sibling','','Opening','America/Los_Angeles');
 
     -- Fall-back has two distinct instants with the same local wall-clock time.
     UPDATE public.task_instances SET scheduled_at='2026-11-01T08:30:00Z' WHERE id=instance;
@@ -83,7 +83,7 @@ BEGIN
     UPDATE public.task_instances SET scheduled_at='2026-03-08T08:00:00Z',scheduled_day='2026-03-08',is_all_day_snapshot=true WHERE id=instance;
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET scheduled_at=''2026-03-08T09:00:00Z'' WHERE id=%L',instance),'23514');
     -- Changing the offset cannot create a second all-day task on the same date.
-    PERFORM pg_temp.expect_task_error(format('INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,scheduled_at,is_all_day_snapshot,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot) VALUES(%L,%L,%L,''2026-03-08'',''2026-03-08T00:00:00Z'',true,''Duplicate all day'','''',''Opening'',''UTC'',false)',brand,loc,def),'23505');
+    PERFORM pg_temp.expect_task_error(format('INSERT INTO public.task_instances(brand_id,location_id,definition_id,scheduled_day,scheduled_at,is_all_day_snapshot,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot) VALUES(%L,%L,%L,''2026-03-08'',''2026-03-08T00:00:00Z'',true,''Duplicate all day'','''',''Opening'',''UTC'')',brand,loc,def),'23505');
 END;
 $$;
 ROLLBACK;

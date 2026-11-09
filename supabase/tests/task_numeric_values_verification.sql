@@ -41,29 +41,19 @@ BEGIN
     INSERT INTO public.task_definitions(id,brand_id,location_id,created_by,name,description,category,recurrence_rule,start_date)
         VALUES(def,brand,loc,actor,'Daily work','Instructions','Opening','FREQ=DAILY','2026-11-01'),
               (other_def,other_brand,NULL,actor,'One-off','Instructions','Closing',NULL,'2026-11-01');
-    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,requires_numeric_value_snapshot,scheduled_at,is_all_day_snapshot)
-        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles',false,'2026-11-01T07:00:00Z',true);
+    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,name_snapshot,description_snapshot,category_snapshot,timezone_snapshot,scheduled_at,is_all_day_snapshot)
+        VALUES(instance,brand,loc,def,'2026-11-01','Daily work','Instructions','Opening','America/Los_Angeles','2026-11-01T07:00:00Z',true);
 
-    -- Configuration is forbidden when numeric input is disabled.
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_definitions SET numeric_unit=''USD'' WHERE id=%L',def),'23514');
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_definitions SET numeric_min=0 WHERE id=%L',def),'23514');
-    UPDATE public.task_definitions SET requires_numeric_value=true,numeric_unit='USD',numeric_min=0,numeric_max=1000 WHERE id=def;
+    -- Units/bounds are optional configuration, independent of completion input.
+    UPDATE public.task_definitions SET numeric_unit='USD',numeric_min=0,numeric_max=1000 WHERE id=def;
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_definitions SET numeric_unit=''  '' WHERE id=%L',def),'23514');
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_definitions SET numeric_min=1001 WHERE id=%L',def),'23514');
-    IF (SELECT requires_numeric_value_snapshot FROM public.task_instances WHERE id=instance) THEN
-        RAISE EXCEPTION 'Definition edit rewrote existing snapshot';
-    END IF;
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET recorded_value=1 WHERE id=%L',instance),'23514');
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET completed_at=now(),completed_by=%L,recorded_value=1 WHERE id=%L',actor,instance),'23514');
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET numeric_unit_snapshot=''USD'' WHERE id=%L',instance),'23514');
-    -- Simulate the explicit copy required of the future materializer.
-    UPDATE public.task_instances SET requires_numeric_value_snapshot=true,
-        numeric_unit_snapshot='USD',numeric_min_snapshot=0,numeric_max_snapshot=1000 WHERE id=instance;
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET numeric_unit_snapshot='''' WHERE id=%L',instance),'23514');
+    UPDATE public.task_instances SET numeric_unit_snapshot='USD',numeric_min_snapshot=0,numeric_max_snapshot=1000 WHERE id=instance;
+    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET numeric_unit_snapshot=''  '' WHERE id=%L',instance),'23514');
     PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET numeric_min_snapshot=1001 WHERE id=%L',instance),'23514');
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET requires_numeric_value_snapshot=NULL WHERE id=%L',instance),'23502');
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET recorded_value=0 WHERE id=%L',instance),'23514');
-    PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET completed_at=now(),completed_by=%L WHERE id=%L',actor,instance),'23514');
+    -- Completion succeeds without a reading, even when bounds are configured.
+    UPDATE public.task_instances SET completed_at=now(),completed_by=actor WHERE id=instance;
     FOREACH special IN ARRAY ARRAY['NaN','Infinity','-Infinity','-0.01','1000.01'] LOOP
         PERFORM pg_temp.expect_task_error(format('UPDATE public.task_instances SET completed_at=now(),completed_by=%L,recorded_value=%L WHERE id=%L',actor,special,instance),'23514');
     END LOOP;
