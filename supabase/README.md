@@ -245,3 +245,17 @@ deadlines. Controlled writers still need authorization and stale-edit handling.
 The migration is an unreleased replacement for the earlier child-table draft.
 Retained databases that applied that draft require a forward migration; this file
 will not automatically rerun. See the recurrence contract for details.
+
+## Controlled completion and reopening
+
+`20261110000000_create_task_completion_functions.sql` exposes
+`public.complete_task_instance(instance_id, value, notes)` and
+`public.reopen_task_instance(instance_id)` to the runtime role. They check scoped
+permissions, lock state, validate optional input and append audit events atomically.
+Direct runtime table writes remain denied. Repeated transitions raise a conflict.
+See [task completion contract](../docs/task-completion.md) for transaction setup,
+lock ordering, privileges, error handling and explicitly unfinished behavior.
+
+`task_completion_verification.sql` tests these entry points as the runtime role.
+The concurrency harness includes task transitions and authorization changes while
+waiting. Definition/history visibility is not expanded by this migration.
