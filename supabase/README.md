@@ -139,3 +139,109 @@ Review and merge precede applying these changes to the shared Supabase project. 
 3. Before the first real deploy, run **Actions → Deploy database → Run workflow** with *dry run* checked. Confirm the listed migrations match what the shared project is missing. If the project already has tables or migration history created outside this folder, resolve that first.
 
 To deploy manually, for example after fixing the secret, run the workflow with *dry run* unchecked.
+
+## Task schema foundation
+
+`20261031212122_create_task_schema.sql` adds task definitions, per-location daily
+instances, and completion/reopening events. Definitions store a nullable `recurrence_rule` containing an RRULE value (for
+example `FREQ=WEEKLY;BYDAY=MO,WE,FR`). NULL means a one-off on `start_date` and
+requires a null `end_date`. Recurring schedules may have an inclusive `end_date`.
+After the occurrence-identity migration, an instance is unique per definition,
+location, and scheduled instant; multiple timed occurrences per day are allowed. See the
+[recurrence storage contract](../docs/task-recurrence.md) for database constraints,
+future application validation requirements, and timezone semantics.
+
+Instances snapshot name, description, category, local due time, and the location's
+IANA timezone so definition/location edits do not rewrite historical instructions. Completion actor IDs reference
+application users. Both completion fields must be null or both populated. Foreign
+keys restrict deletion rather than cascading through task history. Composite
+foreign keys prevent mismatched brands on definitions, instances, and locations.
+
+All three tables have RLS enabled. The runtime role has SELECT on definitions and
+instances. The subsequent `20261102073803_create_task_read_policies.sql` migration
+allows instance reads only at active locations returned by
+`identity_access.current_location_ids_with('task_instances.read')`. Definitions
+still have no read policy and return no rows. The runtime role has no task
+write or event-table privileges. This migration does not enable task API access.
+
+Follow-up migrations must implement scoped policies, instance generation, and
+controlled writes. Those paths must enforce same-organization actors,
+location-specific targets, scheduling and resource activity, snapshot copying,
+and atomic state changes with audit events. Creator and completion IDs must come
+from verified identity. Future-instance edits and timezone-change behavior remain
+workflow decisions; schedule columns alone do not implement a scheduler.
+
+`tests/task_schema_verification.sql` covers valid inserts, rejected cross-brand
+relationships, RRULE structural/date/category constraints, duplicate occurrences,
+completion consistency, timestamp triggers, preserved history, and default-deny
+runtime access. The disposable database harness discovers this test automatically.
+
+`tests/task_read_policies_verification.sql` verifies task-instance visibility as the
+runtime role across organization, brand, and location scopes, denied identities,
+resource deactivation, and assignment revocation.
+
+## Optional task results and notes
+
+Ali confirmed that readings and notes are independently optional for the MVP:
+each completion may contain a numeric reading, plain-text notes, both, or neither. `20261108000000_make_task_results_optional.sql`
+removes the numeric requirement flags and adds nullable `notes` columns to
+instances and events. Existing values, units, bounds and history are preserved.
+
+Definitions may configure `numeric_unit` and inclusive `numeric_min`/`numeric_max`.
+The materializer copies them to instance snapshots. Bounds apply only when a
+reading is supplied. NaN and infinities are rejected. Bounds are input acceptance
+limits, not alert thresholds; an abnormal temperature is not automatically invalid.
+
+An incomplete instance has neither recorded value nor notes. Reopening clears
+both together with completion fields; earlier completion events preserve their
+submitted data. Reopened events contain neither a new value nor completion notes.
+A reopening reason, if required later, should be a distinct field.
+
+Notes are optional plain text limited to 2000 characters (an implementation limit).
+Use NULL for absent notes. Empty or whitespace-only non-NULL notes are rejected
+on both instances and events. Future APIs should normalize blank input to NULL;
+meaningful multiline notes retain their formatting. Clients must
+render notes as text, not HTML. Future controlled functions must authorize and
+lock the instance, update state, and copy value/notes into the event atomically.
+Constraints do not themselves guarantee audit insertion or snapshot immutability.
+Runtime writes remain denied; draft completion data is not supported.
+
+`task_numeric_values_verification.sql` and `task_optional_results_verification.sql`
+cover numeric validation, all four optional-input combinations, length limits,
+state consistency, history retention and denied runtime writes. They use synthetic
+administrator fixtures, not a completed API/write-function implementation.
+
+`20261105220000_add_task_occurrence_identity.sql` upgrades instance storage to
+required `scheduled_at` and `is_all_day_snapshot` fields. Existing date-only rows
+become all-day at local midnight with due times unchanged. New writes must supply
+both fields explicitly. The database verifies finite instants, matching local
+dates, and all-day anchors; unique keys reject duplicate instants and duplicate
+all-day occurrences. The existing location-based RLS remains applicable.
+
+Definition schedules now pair a date-only RRULE with explicit local times (see below).
+Generation and DST choices still require coordination with Student B. See the recurrence
+storage contract for DST and future-edit limitations. The full task MVP also
+requires controlled write functions; this migration does not enable task writes.
+
+## Definition schedule modes and local times
+
+`20261105223000_add_task_definition_times.sql` adds `schedule_mode` (`all_day` or
+`timed`) and `scheduled_times time[]` to each definition. Existing definitions
+remain all-day with an empty array and keep their due times. Timed definitions
+require a nonempty array of unique, non-null local times and NULL `due_time`.
+All-day definitions require an empty array. Arrays must be one-dimensional with
+1-based indexing; 24:00 is rejected. Array ordering has no scheduling meaning.
+
+For daily occurrences at 10:00, 14:00 and 18:00, store `FREQ=DAILY`, mode `timed`,
+and `ARRAY[TIME '10:00', TIME '14:00', TIME '18:00']`. Update mode, times and due
+time together in one SQL statement. CHECK constraints and a pure validation
+helper enforce the rules on one row, without child tables or deferred triggers.
+
+Runtime definition writes remain denied. The recurrence generator remains Student
+B's responsibility; it maps mode to `is_all_day_snapshot` and must handle timezone
+and DST choices. Scheduled times do not establish visibility cutoffs or timed-task
+deadlines. Controlled writers still need authorization and stale-edit handling.
+
+The migration is an unreleased replacement for the earlier child-table draft.
+Retained databases that applied that draft require a forward migration; this file
+will not automatically rerun. See the recurrence contract for details.
