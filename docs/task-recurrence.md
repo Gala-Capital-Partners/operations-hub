@@ -11,7 +11,9 @@ materialization, and scheduler integration are not implemented in this change.
 - Copy mode, timezone, instructions and numeric units/bounds into each instance.
 - Reuse the same scheduled instant on retries; never overwrite historical rows.
 - Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
-- Generation and controlled writers remain unimplemented; runtime writes denied.
+- Generation and definition writers remain unimplemented; direct runtime table
+  writes are denied. Controlled completion/reopening now exist; see
+  [task completion](task-completion.md).
 
 ## Ownership and scope
 
@@ -99,7 +101,8 @@ default-deny privileges. Run it through the disposable database harness:
 python3 supabase/tests/location_assignment_concurrency.py
 ```
 
-Task-instance read RLS exists; definition/history policies and controlled writes remain follow-up work. The SQL tests do
+Task-instance read RLS and controlled completion/reopening exist;
+definition/history policies and definition writers remain follow-up work. The SQL tests do
 not prove recurrence evaluation, materialization idempotency, or scheduler
 behavior. Those require tests alongside their future implementation.
 
