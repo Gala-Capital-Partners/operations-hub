@@ -17,8 +17,8 @@ const REAL_AUTH = process.env.E2E_SUPABASE === '1'
  */
 export default defineConfig({
   testDir: './tests',
-  testMatch: REAL_AUTH ? /supabase-auth\.spec\.ts$/ : /.*\.spec\.ts$/,
-  testIgnore: REAL_AUTH ? [] : [/supabase-auth\.spec\.ts$/],
+  testMatch: REAL_AUTH ? /supabase-.*\.spec\.ts$/ : /.*\.spec\.ts$/,
+  testIgnore: REAL_AUTH ? [] : [/supabase-.*\.spec\.ts$/],
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,

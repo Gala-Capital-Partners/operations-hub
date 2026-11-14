@@ -39,3 +39,23 @@ export function initialsOf(fullName: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean)
   return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?'
 }
+
+/**
+ * Whether the account holds a permission at a location (organization-, brand- or
+ * location-scoped). Only for showing or hiding controls: the API enforces access.
+ */
+export function canAtLocation(
+  account: { permissions?: { permission: string; scope: string; brandId: string | null; locationId: string | null }[]; locations: { id: string; brandId: string }[] },
+  permission: string,
+  locationId: string,
+): boolean {
+  const location = account.locations.find(l => l.id === locationId)
+  if (!location) return false
+  return (account.permissions ?? []).some(
+    p =>
+      p.permission === permission &&
+      (p.scope === 'organization' ||
+        (p.scope === 'brand' && p.brandId === location.brandId) ||
+        (p.scope === 'location' && p.locationId === locationId)),
+  )
+}

@@ -29,21 +29,23 @@ Other commands:
 | `npm run test:ui` | Interactive Playwright UI (step through tests, see each action) |
 | `npm run report` | Open the HTML report from the last run |
 
-### Real sign-in suite
+### Real sign-in and database task suites
 
-`tests/supabase-auth.spec.ts` signs in with the seeded accounts against a local Supabase.
+`tests/supabase-auth.spec.ts` and `tests/supabase-tasks.spec.ts` sign in with the seeded accounts against a
+local Supabase and use the `/api/task-instances` endpoints. Tests that complete a task reopen it as the
+location manager afterwards, so they can be re-run without resetting the database.
 Set up local sign-in first ([supabase/README.md](../supabase/README.md#local-seed-data-and-sign-in)), then:
 
 ```bash
 E2E_SUPABASE=1 npm test            # PowerShell: $env:E2E_SUPABASE=1; npm test
 ```
 
-With `E2E_SUPABASE=1` only this suite runs, using your `server/.env` and `client/.env.local`.
+With `E2E_SUPABASE=1` only these suites run, using your `server/.env` and `client/.env.local`.
 Without it, the demo suites run and Supabase sign-in is switched off for the client, even if
 `client/.env.local` configures it. If you already have `npm run dev:client` running with Supabase
 configured, stop it first so Playwright starts a client in the right mode.
 
-## What is covered (27 demo tests + 8 real sign-in tests)
+## What is covered (27 demo tests + 14 real sign-in and database task tests)
 
 **Sign-in and access** (`tests/auth-and-navigation.spec.ts`)
 - Unauthenticated users are redirected to sign-in
@@ -69,6 +71,13 @@ configured, stop it first so Playwright starts a client in the right mode.
 - Only an Organization Admin can switch brands; a Taco Verde manager lands in Taco Verde
 - The session survives a reload; sign out clears the Supabase session
 - `/api/me` returns 401 without an access token
+
+**Database tasks** (`tests/supabase-tasks.spec.ts`, needs `E2E_SUPABASE=1`)
+- An employee sees today's tasks for their location by shift, including timed occurrences at local times
+- An employee completes a task (saved, survives reload) but cannot reopen it; a location manager reopens it
+- A reading outside the task's bounds is rejected; a valid reading and notes are saved and shown
+- Past days can be browsed; a brand admin browses every brand location read-only with an All Locations rollup
+- A Taco Verde manager sees only Taco Verde tasks
 
 ## Notes
 

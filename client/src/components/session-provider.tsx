@@ -22,6 +22,8 @@ export type Account = {
   initials: string
   brands: MeResponse['brands']
   locations: MeResponse['locations']
+  /** Scoped permissions from /api/me; the backend still enforces them on every request. */
+  permissions: Pick<MeResponse['permissions'][number], 'permission' | 'scope' | 'brandId' | 'locationId'>[]
 }
 
 export type Session =
@@ -145,6 +147,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             initials: initialsOf(me.user.fullName),
             brands: me.brands,
             locations: me.locations,
+            permissions: me.permissions.map(({ permission, scope, brandId, locationId }) => ({ permission, scope, brandId, locationId })),
           },
         })
       } catch (err) {
