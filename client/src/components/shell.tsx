@@ -5,9 +5,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Ic } from '@/components/icons'
 import { BRANDS, ROLES, getNavItems } from '@/lib/config'
 import { type Brand, type Role, type Screen } from '@/lib/types'
+import type { Account } from '@/components/session-provider'
 
 export function Shell({
-  children, role, brand, screen, onBrandSwitch, onRoleSwitch, onLogout,
+  children, role, brand, screen, onBrandSwitch, onRoleSwitch, onLogout, account,
 }: {
   children: ReactNode
   role: Role
@@ -16,6 +17,8 @@ export function Shell({
   onBrandSwitch: (b: Brand) => void
   onRoleSwitch: (r: Role) => void
   onLogout: () => void
+  /** Real signed-in user. Absent in the demo, which shows a role switcher and placeholder names. */
+  account?: Account
 }) {
   const navItems = getNavItems(role)
   // Mobile account menu (role switch + sign out), opened from the avatar in the mobile header
@@ -28,7 +31,18 @@ export function Shell({
     return () => window.removeEventListener('keydown', onKey)
   }, [menuOpen])
   const b = BRANDS[brand]
-  const r = ROLES[role]
+  // Real accounts show their own name and can't switch roles; the demo uses placeholder people.
+  const r = account
+    ? { ...ROLES[role], name: account.fullName, initials: account.initials }
+    : ROLES[role]
+  const isDemo = !account
+  const brandBrandId = account?.brands.find(x => x.slug === brand)?.id
+  const locationCount = account ? account.locations.filter(l => l.brandId === brandBrandId).length : b.locations
+  // Brands the user may switch between: real accounts only see brands they have access to.
+  const switchableBrands = (['burgercraft', 'tacoverde'] as Brand[]).filter(
+    br => !account || account.brands.some(x => x.slug === br),
+  )
+  const canSwitchBrand = role === 'corporate' && switchableBrands.length > 1
 
   const NavIcon = (id: string) => ({
     dashboard: <Ic.Dashboard />,
@@ -53,13 +67,13 @@ export function Shell({
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-stone-900 truncate">{b.name}</p>
-              <p className="text-[10px] text-stone-400">OpsHub · {b.locations} locations</p>
+              <p className="text-[10px] text-stone-400">OpsHub · {locationCount} {locationCount === 1 ? 'location' : 'locations'}</p>
             </div>
           </div>
           {/* Brand switcher — Corporate Admin only */}
-          {role === 'corporate' && (
+          {canSwitchBrand && (
             <div className="bg-stone-100 rounded-lg p-1 flex gap-1">
-              {(['burgercraft', 'tacoverde'] as Brand[]).map(br => (
+              {switchableBrands.map(br => (
                 <button
                   key={br}
                   onClick={() => onBrandSwitch(br)}
@@ -94,7 +108,7 @@ export function Shell({
 
         {/* Bottom */}
         <div className="border-t border-stone-100 p-4 space-y-3">
-          <div>
+          {isDemo && <div>
             <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest mb-1.5">Demo: Switch Role</p>
             <select
               value={role}
@@ -105,7 +119,7 @@ export function Shell({
                 <option key={k} value={k}>{v.label}</option>
               ))}
             </select>
-          </div>
+          </div>}
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-full bg-teal-100 flex items-center justify-center text-xs font-bold text-teal-800 flex-shrink-0">
               {r.initials}
@@ -132,7 +146,7 @@ export function Shell({
           </div>
           <div className="flex items-center gap-1.5 text-xs text-stone-400">
             <Ic.Building />
-            <span>{b.name} · {b.locations} locations</span>
+            <span>{b.name} · {locationCount} {locationCount === 1 ? 'location' : 'locations'}</span>
           </div>
         </header>
 
@@ -148,9 +162,9 @@ export function Shell({
             <span className="text-sm font-semibold text-stone-900 capitalize">{screen}</span>
           </div>
           <div className="flex items-center gap-2">
-            {role === 'corporate' && (
+            {canSwitchBrand && (
               <div className="bg-stone-100 rounded-md p-0.5 flex">
-                {(['burgercraft', 'tacoverde'] as Brand[]).map(br => (
+                {switchableBrands.map(br => (
                   <button
                     key={br}
                     onClick={() => onBrandSwitch(br)}
@@ -190,7 +204,7 @@ export function Shell({
                         <p className="text-[11px] text-stone-400 truncate">{r.label} · {b.name}</p>
                       </div>
                     </div>
-                    <div className="px-4 py-3 border-b border-stone-100">
+                    {isDemo && <div className="px-4 py-3 border-b border-stone-100">
                       <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest mb-1.5">Demo: Switch Role</p>
                       <select
                         value={role}
@@ -201,7 +215,7 @@ export function Shell({
                           <option key={k} value={k}>{v.label}</option>
                         ))}
                       </select>
-                    </div>
+                    </div>}
                     <button
                       role="menuitem"
                       onClick={() => { setMenuOpen(false); onLogout() }}

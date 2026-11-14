@@ -32,6 +32,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       screen={screen}
       onBrandSwitch={setBrand}
       onRoleSwitch={setRole}
+      account={session.mode === 'supabase' ? session.account : undefined}
       onLogout={() => {
         logout()
         router.replace('/')

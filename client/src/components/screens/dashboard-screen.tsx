@@ -9,7 +9,7 @@ import { statusColor } from '@/lib/format'
 import { LOCATION_DATA, SALES } from '@/lib/mock-data'
 import { type Brand, type Role } from '@/lib/types'
 
-export function DashboardScreen({ role, brand }: { role: Role; brand: Brand }) {
+export function DashboardScreen({ role, brand, userName }: { role: Role; brand: Brand; /** Signed-in user's name; the demo uses a placeholder person */ userName?: string }) {
   const latest = SALES[SALES.length - 1]
   const diff = latest.today - latest.yesterday
   const pctStr = ((diff / latest.yesterday) * 100).toFixed(1)
@@ -34,7 +34,7 @@ export function DashboardScreen({ role, brand }: { role: Role; brand: Brand }) {
       {/* Greeting */}
       <div>
         <h1 className="text-xl font-semibold text-stone-900">
-          Good morning, {ROLES[role].name.split(' ')[0]}
+          Good morning, {(userName ?? ROLES[role].name).split(' ')[0]}
         </h1>
         <p className="text-sm text-stone-500 mt-0.5">
           {new Date(TODAY + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {BRANDS[brand].name}
