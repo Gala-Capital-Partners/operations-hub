@@ -2,7 +2,8 @@ import { Router, type RequestHandler } from 'express';
 import { type Pool } from 'pg';
 import {
   createTaskCompleteController,
-  createTaskReopenController
+  createTaskReopenController,
+  createTaskReadController
 } from '../controller/task-instances.controller.js';
 
 const requireJsonBody: RequestHandler = (req, res, next) => {
@@ -31,6 +32,7 @@ export function createTaskInstancesRouter(deps: {
 
   const completeTask = createTaskCompleteController(deps.pool);
   const reopenTask = createTaskReopenController(deps.pool);
+  const readTask = createTaskReadController(deps.pool);
 
   router.post(
     '/:id/complete',
@@ -43,6 +45,12 @@ export function createTaskInstancesRouter(deps: {
     deps.requireAuth,
     requireJsonBody,
     reopenTask
+  );
+
+  router.get(
+    '/',
+    deps.requireAuth,
+    readTask,
   );
 
   return router;

@@ -1,6 +1,6 @@
 # Operations Hub — Backend
 
-Express 5 + TypeScript API with Supabase authentication and PostgreSQL-backed identity access. `/api/me` reads the authenticated user's application profile and scoped access. The protected `/api/task-instances` endpoints complete and reopen PostgreSQL task instances. The prototype `/api/tasks` routes still use an in-memory store; restarting the server resets that prototype data. Those prototype routes, including the demo reset route, remain public.
+Express 5 + TypeScript API with Supabase authentication and PostgreSQL-backed identity access. `/api/me` reads the authenticated user's application profile and scoped access. The protected `/api/task-instances` endpoints list, complete, and reopen PostgreSQL task instances. The prototype `/api/tasks` routes still use an in-memory store; restarting the server resets that prototype data. Those prototype routes, including the demo reset route, remain public.
 
 ## Local setup
 
@@ -98,6 +98,100 @@ Errors use `{"error":{"message":"..."}}`. The profile error also includes a code
 ```
 
 Clients should obtain a fresh token or prompt sign-in for 401, show an application-access message for 403, and offer retry for service failures. Never interpret an authentication-service failure as a successful login.
+
+## Task-instance listing
+
+### GET /api/task-instances
+
+Lists existing database-backed task instances for one location and calendar day.
+Send a bearer access token and both query parameters:
+
+| Parameter | Requirement |
+| --- | --- |
+| `locationId` | One UUID string identifying the location. |
+| `date` | One real calendar date in exactly `YYYY-MM-DD` format, between 2000 and 2199. Missing, repeated, malformed, and impossible dates are rejected. |
+
+The date means the selected store's calendar day and filters `scheduled_day`;
+it is not converted from the viewer's or server's timezone. There is no implicit
+“today” default. Send no request body; the controller takes filters only from the
+query string. Normal application JSON parsing and size limits still apply if a
+body is sent. Date ranges, pagination, and completion-state filters are not
+implemented; extra query parameters do not add filters.
+
+```bash
+curl -i --get 'http://localhost:4000/api/task-instances' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  --data-urlencode "locationId=$LOCATION_ID" \
+  --data-urlencode 'date=2026-11-13'
+```
+
+Use an existing location UUID and valid access token in the shell variables.
+The controller checks `task_instances.read` for the requested location through
+`current_location_ids_with`, then queries through `withUserTransaction` with RLS
+still enforced. Directory access (`locations.read`) alone is insufficient.
+Employees and Location Managers have access at assigned locations; Brand and
+Organization Admins have read access within their respective scopes under the
+[approved matrix](../docs/db-design.md#approved-initial-permission-matrix).
+
+Success returns `200` with an object containing a task array:
+
+```json
+{
+  "tasks": [
+    {
+      "id": "<instance-uuid>",
+      "name": "Check fridge temperature",
+      "description": "Record the current temperature.",
+      "category": "Opening",
+      "scheduledAt": "2026-11-13T18:00:00.000Z",
+      "scheduledDay": "2026-11-13",
+      "isAllDay": false,
+      "timezone": "America/Los_Angeles",
+      "dueTime": null,
+      "completedAt": null,
+      "completedBy": null,
+      "recordedValue": null,
+      "notes": null,
+      "numericUnit": "C",
+      "numericMin": -30,
+      "numericMax": 50
+    }
+  ]
+}
+```
+
+The example shows the response shape, not seeded data. Results are ordered by
+`scheduled_at` ascending, then UUID `id` ascending to break ties. Multiple daily
+occurrences have separate IDs and scheduled instants. `scheduledAt` is an ISO
+UTC timestamp, not an automatic visibility cutoff or deadline; display it using
+`timezone`. `scheduledDay` remains a date-only string. `isAllDay` identifies
+all-day occurrences; their midnight anchor is not a timed appointment.
+
+Names, instructions, category, timezone, and numeric configuration come from
+instance snapshots. `dueTime` is a nullable local time string; timed instances
+use `scheduledAt` to distinguish occurrences. `completedAt` is an ISO timestamp
+or `null`, and `completedBy` is a user UUID or `null`. Readings and bounds are
+numbers or `null`, with the same JavaScript precision limits as completion
+responses. Notes and units are nullable strings. Render notes as plain text.
+
+An accessible location with no matching tasks returns `200` with
+`{"tasks":[]}`. A denied or nonexistent location returns the same generic `403`
+without revealing its existence. Permission checking and task reading are
+separate statements: if access is revoked between them, RLS can filter out the
+rows, resulting in an empty list rather than a second explicit 403 check.
+
+| Status | Meaning / error code |
+| --- | --- |
+| 200 | Task list, possibly empty. |
+| 400 | `INVALID_LOCATION_ID` or `INVALID_DATE`; malformed JSON also returns 400 if supplied. |
+| 401 | Missing, malformed, invalid, or expired authentication. |
+| 403 | `TASK_OPERATION_FORBIDDEN`: location read permission is absent, including inactive/missing identity or inactive/missing location/brand. |
+| 503 | Authentication service returns an error other than an invalid-token 401/403. |
+| 500 | Unexpected failure, including database errors. |
+
+This endpoint returns current instance state, not audit history, and does not
+generate missing instances. Dedicated endpoint tests and real-database HTTP
+verification of this list contract remain pending teammate work.
 
 ## Task-instance completion and reopening
 
@@ -202,7 +296,7 @@ The controllers call the SQL functions through `withUserTransaction`. State and
 audit events commit together; database exceptions roll back before error responses
 are sent. Rejected state transitions do not add events. Requests are not
 request-ID-idempotent: after a network timeout, reconcile state before retrying.
-No task-instance read endpoint is supplied by this change.
+Use the location/date list endpoint above to reconcile current instance state.
 
 Task writes require READ COMMITTED. The transaction helper uses plain `BEGIN`,
 so keep the connection's default isolation at READ COMMITTED. Other isolation
@@ -217,7 +311,7 @@ No deadline, future-date, or historical cutoff is enforced by these operations.
 
 `src/controller/me.controller.ts` owns the profile/access queries, response mapping, and the 403 response for a missing active profile. It receives the pool through its factory and reads the verified actor ID from `res.locals.actorId`; it does not create connections or authenticate tokens itself. Database operations run through `withUserTransaction`, and unexpected errors propagate to the application error handler.
 
-`src/routes/task-instances.routes.ts` creates the completion/reopening controllers and connects authentication, JSON content-type checks, and handlers. `src/controller/task-instances.controller.ts` validates inputs, calls the SQL entry points, maps responses, and translates recognized SQL errors after rollback.
+`src/routes/task-instances.routes.ts` creates the list/completion/reopening controllers and connects authentication and handlers; POST routes also check JSON content types. `src/controller/task-instances.controller.ts` validates inputs and maps responses. Listing checks scoped read access and performs an RLS-protected query. Writes call controlled SQL functions and translate recognized SQL errors after rollback; unexpected errors propagate to the application error handler.
 
 When adding a protected route, attach authentication before the controller and pass dependencies into the controller factory. Keep URL/middleware wiring in the router and request-handling behavior in the controller. The existing Tasks routes have not yet been moved into controllers.
 
@@ -303,15 +397,15 @@ src/
   app.ts                    express app, CORS, JSON, error handling
   routes/tasks.routes.ts    /api/tasks endpoints
   routes/me.routes.ts       /api/me routing and authentication wiring
-  routes/task-instances.routes.ts  protected completion/reopening routes
+  routes/task-instances.routes.ts  protected listing/completion/reopening routes
   controller/me.controller.ts  /api/me queries and response handling
-  controller/task-instances.controller.ts  task writes, validation, responses
+  controller/task-instances.controller.ts  task reads/writes, validation, responses
   validation/task.ts        request body validation
   store/task.store.ts       in-memory repository
   data/tasks.seed.ts        mock tasks from the design
   types/task.ts             Task types
   types/me.ts               /api/me row types
-  types/task-instance.ts    task-instance state row type
+  types/task-instance.ts    task-instance state and list row types
   auth/bearer-token.ts      bearer-token parsing and Supabase auth client
   auth/require-auth.ts      token verification middleware
   db/pool.ts                PostgreSQL connection pool
