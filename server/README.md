@@ -99,6 +99,94 @@ Errors use `{"error":{"message":"..."}}`. The profile error also includes a code
 
 Clients should obtain a fresh token or prompt sign-in for 401, show an application-access message for 403, and offer retry for service failures. Never interpret an authentication-service failure as a successful login.
 
+## Create a task definition
+
+`POST /api/task-definitions` requires a verified Bearer token and a JSON body.
+Apply migrations through `20261116010000_harden_task_definition_creation.sql`
+before using it. The backend calls `public.create_task_definition`; its permission
+helper remains internal to `identity_access`.
+For local development, use `npx supabase migration up --local` from the repo root.
+The endpoint is mounted only when both authentication and the database pool are
+provided to `createApp`.
+
+Example body:
+
+```json
+{
+  "brandId": "22222222-2222-4222-8222-222222222222",
+  "locationId": "33333333-3333-4333-8333-333333333333",
+  "name": "Check fridge",
+  "description": "Record the temperature.",
+  "category": "Opening",
+  "startDate": "2026-11-16",
+  "recurrenceRule": "FREQ=DAILY",
+  "scheduleMode": "timed",
+  "scheduledTimes": ["10:00", "18:00"],
+  "numericUnit": "C",
+  "numericMin": -30,
+  "numericMax": 50
+}
+```
+
+The IDs above are placeholders; supply real, authorized targets.
+Text limits after trimming are 200 characters for name, 2000 for description,
+and 32 for numericUnit. Both API and SQL count Unicode code points, including
+an emoji as one code point. Existing rows are checked before adding the SQL
+constraints; the migration fails instead of truncating oversized values.
+
+Required fields: brandId, name, description (empty string allowed), category,
+and startDate. Optional locationId, recurrenceRule, endDate, dueTime, numericUnit,
+numericMin and numericMax default to null. scheduleMode defaults to all_day and
+scheduledTimes to an empty array. Null locationId requests a brand-wide definition;
+a location manager must explicitly provide their store's locationId.
+
+The backend trims text, validates real dates (2000–2199), UUIDs, finite numeric
+bounds, categories, schedule mode and times. Times use HH:mm, reject duplicates
+and 24:00, and are sorted. Timed definitions require at least one time and null
+dueTime; all-day definitions require no times. Numeric readings remain optional
+when instances are later completed. Unknown fields, including createdBy, are
+rejected. The creator comes exclusively from the authenticated actor.
+
+Null recurrenceRule creates a one-time definition on startDate and requires null
+endDate. For recurring definitions, endDate is optional and inclusive. See
+[the recurrence contract](../docs/task-recurrence.md) for the supported RRULE subset.
+
+Authorization is enforced by the controlled SQL writer and RLS:
+
+- Location-scoped tasks.manage permits only definitions targeting that location.
+- Brand-scoped tasks.manage permits brand-wide and store-specific definitions
+  in that brand.
+- Organization-scoped tasks.manage permits those targets within that organization.
+- The caller, target brand and any target location must be active. Location and
+  brand must match. Missing or unauthorized targets return the same generic 403.
+
+A successful transaction returns 201 with the saved definition as one camelCase
+object: id, brandId, locationId, createdBy, name, description, category,
+recurrenceRule, startDate, endDate, scheduleMode, scheduledTimes, dueTime,
+numericUnit, numericMin, numericMax, isActive, createdAt and updatedAt.
+Calendar dates remain YYYY-MM-DD; timestamps are ISO strings; times are HH:mm;
+numeric bounds are JSON numbers or null. Arbitrary-precision numeric input is
+not supported. The response is sent only after COMMIT succeeds.
+
+Errors: 400 for invalid input/constraints, 401 for missing or invalid authentication,
+403 for denied creation, 413 for oversized JSON, 415 for non-JSON content,
+503 when authentication is unavailable, and 500 for unexpected database/configuration
+failures. The SQL writer requires READ COMMITTED and shares the organization lock
+with identity writers so waiting calls recheck assignment changes. Its reused
+isolation error mentions assignment writes; this is a server configuration error.
+Runtime has no direct INSERT/UPDATE/DELETE permission on definitions.
+
+This endpoint saves a definition only: it does not generate task instances or
+implement definition listing/editing. Each successful POST creates a new definition;
+there is no idempotency key, so callers should not blindly retry ambiguous failures.
+SQL regression coverage lives in
+`supabase/tests/task_definition_writer_verification.sql`; the disposable database
+harness also checks permission revocation and caller deactivation while waiting.
+Dedicated automated HTTP creation tests remain outstanding. Development HTTP
+verification uses temporary checks with stubbed auth/database, not a full
+Supabase-authenticated run. Unexpected foreign-key errors return a generic 500,
+not an authorization denial.
+
 ## Route and controller responsibilities
 
 `app.ts` mounts the `/api/me` router. `src/routes/me.routes.ts` connects the GET route to `requireAuth`, then to the handler returned by `createGetMeController(pool)`.

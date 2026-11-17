@@ -148,6 +148,40 @@ try:
       FROM public.roles WHERE key='location_manager';
     """)
 
+    # Definition writers share identity locks and must recheck after waiting.
+    create_definition = (
+        "SELECT public.create_task_definition("
+        f"'{ids['brand']}','{ids['location']}','Concurrent definition','','Opening',NULL,"
+        "'2026-11-16',NULL,'all_day',ARRAY[]::time[],NULL,NULL,NULL,NULL);"
+    )
+    a = open_a(lock_org() + f"DELETE FROM public.user_locations WHERE user_id='{ids['manager']}';")
+    b = competing('SET LOCAL ROLE operations_hub_runtime;\n' + actor('manager')
+                  + create_definition, 'definition-revoked-manager')
+    finish_a(a)
+    out, err = b.communicate(timeout=15)
+    assert b.returncode != 0 and 'not authorized' in err, (out, err)
+    assert sql("SELECT count(*) FROM public.task_definitions WHERE name='Concurrent definition';").stdout.strip() == '0'
+    sql(f"""INSERT INTO public.user_locations(user_id,organization_id,brand_id,location_id,role_id)
+        SELECT '{ids['manager']}','{ids['org']}','{ids['brand']}','{ids['location']}',id
+        FROM public.roles WHERE key='location_manager';""")
+    print('PASS: waiting definition writer rejects revoked assignment', flush=True)
+
+    a = open_a(lock_org() + f"UPDATE public.users SET is_active=false WHERE id='{ids['manager']}';")
+    b = competing('SET LOCAL ROLE operations_hub_runtime;\n' + actor('manager')
+                  + create_definition, 'definition-deactivated-manager')
+    finish_a(a)
+    out, err = b.communicate(timeout=15)
+    assert b.returncode != 0 and 'Caller identity changed while waiting' in err, (out, err)
+    assert sql("SELECT count(*) FROM public.task_definitions WHERE name='Concurrent definition';").stdout.strip() == '0'
+    sql(f"UPDATE public.users SET is_active=true WHERE id='{ids['manager']}';")
+    print('PASS: waiting definition writer rejects deactivated actor', flush=True)
+
+    for isolation in ['REPEATABLE READ', 'SERIALIZABLE']:
+        r = sql(f'BEGIN ISOLATION LEVEL {isolation}; SET LOCAL ROLE operations_hub_runtime;'
+                + actor('manager') + create_definition, check=False)
+        assert r.returncode != 0 and 'require READ COMMITTED' in r.stderr, r.stderr
+    print('PASS: definition creation rejects unsupported isolation levels', flush=True)
+
     # Two simultaneous grants: second waits and sees the committed first grant.
     a = open_a('SET LOCAL ROLE operations_hub_runtime;\n' + actor('admin') + set_assignment())
     b = competing('SET LOCAL ROLE operations_hub_runtime;\n' + actor('admin') + set_assignment(), 'assignment-second-grant')

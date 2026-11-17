@@ -1,7 +1,58 @@
 # Task recurrence storage contract
 
-Status: database schema foundation only. Recurrence validation, date expansion,
-materialization, and scheduler integration are not implemented in this change.
+Status: database schema, backend definition-input validation and controlled
+definition creation are implemented. Date expansion, materialization, and scheduler
+integration remain unfinished. Apply the definition-writer migration before using
+the creation endpoint.
+
+## Backend recurrence validation
+
+`server/src/scheduling/recurrence.ts` uses pinned `rrule` 2.8.1 to parse rules
+and check that `start_date` is an occurrence. The task-definition validator calls
+it after checking calendar dates. SQL's existing recurrence CHECK remains a
+structural guard; it intentionally permits more syntax than this API subset.
+No new SQL migration is needed for recurrence validation.
+
+Accepted API subset (a deliberate initial support boundary, not the full RFC):
+
+| Field | Supported values |
+| --- | --- |
+| FREQ | DAILY, WEEKLY, MONTHLY, YEARLY |
+| INTERVAL | Integer 1–366; library default is 1 |
+| COUNT | Integer 1–73049; counts dates, not individual time slots |
+| BYDAY | Unique MO–SU weekdays, WEEKLY only; no ordinal weekdays |
+| WKST | MO–SU, WEEKLY only; library default is Monday |
+| BYMONTHDAY | Unique integers -31 through -1 or 1 through 31, MONTHLY/YEARLY only |
+| BYMONTH | Unique integers 1–12, YEARLY only |
+
+An omitted selector uses the library's DTSTART defaults (for example a monthly
+rule without BYMONTHDAY uses start_date's day of month). A missing calendar date,
+such as February 31, is skipped by the recurrence library rather than clamped.
+Unknown/duplicate keys, BYSETPOS, time-of-day selectors, embedded dates/timezones,
+prefixes, multiline text, and lowercase syntax are rejected. Numeric values and
+selector lists are canonicalized; FREQ is always stored first. The normalizer
+trims outer whitespace before validation. The canonical returned value must be
+persisted, not the original request string.
+
+`start_date` must be the first matching date: a Monday start with BYDAY=TU is
+rejected. Null recurrence means one-off and requires null end_date. Recurring
+end_date is optional and inclusive and cannot precede start_date; the future
+generator must apply it independently of the RRULE. Validation only evaluates
+the start day with the library; it does not enumerate the schedule or guarantee
+the performance of future expansion. Dates use UTC midnight as neutral calendar
+representations, not actual location timestamps.
+
+Examples:
+
+- `FREQ=DAILY;INTERVAL=2`: every other day starting on start_date.
+- `FREQ=WEEKLY;BYDAY=MO,WE,FR`: start_date must be one of those weekdays.
+- `FREQ=MONTHLY;BYMONTHDAY=-1`: last day of each month, with a matching start_date.
+- `FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29`: leap-day recurrence.
+
+Multiple occurrences per date still come from scheduled_times. For example,
+COUNT=3 with two time slots yields up to six instances per eligible location,
+subject to end_date and the generator's eventual DST policy. Agree on that UI
+wording and DST policy before implementing generation.
 
 ## Generator quick reference
 
@@ -11,15 +62,17 @@ materialization, and scheduler integration are not implemented in this change.
 - Copy mode, timezone, instructions and numeric units/bounds into each instance.
 - Reuse the same scheduled instant on retries; never overwrite historical rows.
 - Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
-- Generation and controlled writers remain unimplemented; runtime writes denied.
+- Generation remains unimplemented; definition creation uses a controlled writer.
+  Direct runtime table writes remain denied.
 
 ## Ownership and scope
 
 GCP's kickoff calls for RRULE recurrence through a library and an idempotent
 `materialize_task_instances(run_date)` operation. Student A provides the schema,
-constraints, permissions, and SQL verification. Student B owns the recurrence
-implementation and materialization. This document describes their database
-interface without prescribing a TypeScript module or library version.
+constraints, permissions, and SQL verification. This task-definition creation
+work also implements backend recurrence validation with rrule 2.8.1. Instance
+generation and scheduler integration are still outstanding; coordinate their
+implementation with the team and reuse the accepted contract documented here.
 
 ## Database contract
 
@@ -99,7 +152,7 @@ default-deny privileges. Run it through the disposable database harness:
 python3 supabase/tests/location_assignment_concurrency.py
 ```
 
-Task-instance read RLS exists; definition/history policies and controlled writes remain follow-up work. The SQL tests do
+Task-instance read RLS exists; definition/history read policies and definition editing remain follow-up work. The SQL tests do
 not prove recurrence evaluation, materialization idempotency, or scheduler
 behavior. Those require tests alongside their future implementation.
 
@@ -111,9 +164,9 @@ occurrences per matching date at each eligible location. The generator converts
 those local date/time pairs in the location timezone into scheduled instants.
 Hourly RRULEs remain unsupported; fixed times implement the multiple-daily MVP.
 RRULE COUNT counts matching dates in this split model, not the expanded time slots.
-Confirm the UI wording and test that distinction in Student B's generator.
+Confirm the UI wording and test that distinction in the generator.
 
-Student B and the database owner must agree on DST gap/fold handling before
+The generator implementer and database owner must agree on DST gap/fold handling before
 enabling timed generation. Do not silently let a library normalize missing times.
 For a repeated fall-back wall time, storage can distinguish both instants; this
 is not a decision that the generator should produce both. Do not normalize away
