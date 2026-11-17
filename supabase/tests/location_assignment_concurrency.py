@@ -235,6 +235,59 @@ try:
                     + actor('admin') + user_role_call(operation, 'target', 'org_admin', None), check=False)
             assert r.returncode != 0 and 'require READ COMMITTED' in r.stderr, r.stderr
     print('PASS: organization/brand writes reject unsupported isolation levels', flush=True)
+
+    # Task writes share the identity lock and enforce one state transition/event.
+    definition, instance = str(uuid.uuid4()), str(uuid.uuid4())
+    sql(f"""BEGIN; SET LOCAL ROLE postgres;
+    INSERT INTO public.user_locations(user_id,organization_id,brand_id,location_id,role_id)
+      SELECT '{ids['target']}','{ids['org']}','{ids['brand']}','{ids['location']}',id
+      FROM public.roles WHERE key='employee'
+      ON CONFLICT(user_id,location_id) DO UPDATE SET role_id=excluded.role_id;
+    INSERT INTO public.user_locations(user_id,organization_id,brand_id,location_id,role_id)
+      SELECT '{ids['manager']}','{ids['org']}','{ids['brand']}','{ids['location']}',id
+      FROM public.roles WHERE key='location_manager'
+      ON CONFLICT(user_id,location_id) DO UPDATE SET role_id=excluded.role_id;
+    INSERT INTO public.task_definitions(id,brand_id,created_by,name,description,category,start_date)
+      VALUES('{definition}','{ids['brand']}','{ids['admin']}','Concurrency','','Opening','2026-11-01');
+    INSERT INTO public.task_instances(id,brand_id,location_id,definition_id,scheduled_day,scheduled_at,is_all_day_snapshot,
+        name_snapshot,description_snapshot,category_snapshot,timezone_snapshot)
+      VALUES('{instance}','{ids['brand']}','{ids['location']}','{definition}','2026-11-01','2026-11-01T00:00:00Z',true,'Concurrency','','Opening','UTC');
+    COMMIT;""")
+    def task_call(who, operation):
+        return ('SET LOCAL ROLE operations_hub_runtime;' + actor(who)
+                + f"SELECT public.{operation}_task_instance('{instance}');")
+    for operation, who, count in [('complete', 'target', 1), ('reopen', 'manager', 2)]:
+        body = task_call(who, operation)
+        a = open_a(body)
+        b = competing(body, 'task-duplicate-' + operation)
+        finish_a(a)
+        out, err = b.communicate(timeout=15)
+        assert b.returncode != 0 and 'already in the requested state' in err, (out, err)
+        assert sql(f"SELECT count(*) FROM public.task_instance_events WHERE instance_id='{instance}';").stdout.strip() == str(count)
+        print('PASS: concurrent task ' + operation + ' produces one transition/event', flush=True)
+    # The real assignment revoker holds the same organization lock.
+    a = open_a('SET LOCAL ROLE operations_hub_runtime;' + actor('admin')
+               + f"SELECT identity_access.revoke_location_assignment('{ids['target']}','{ids['location']}',gen_random_uuid());")
+    b = competing(task_call('target', 'complete'), 'task-revoked-permission')
+    finish_a(a)
+    out, err = b.communicate(timeout=15)
+    assert b.returncode != 0 and 'not authorized' in err, (out, err)
+    assert sql(f"SELECT count(*) FROM public.task_instance_events WHERE instance_id='{instance}';").stdout.strip() == '2'
+    print('PASS: waiting completion rechecks revoked assignment', flush=True)
+    # Administrative deactivation must also be seen after the wait.
+    a = open_a(lock_org() + f"UPDATE public.users SET is_active=false WHERE id='{ids['manager']}';")
+    b = competing(task_call('manager', 'complete'), 'task-inactive-actor')
+    finish_a(a)
+    out, err = b.communicate(timeout=15)
+    assert b.returncode != 0 and 'identity changed' in err, (out, err)
+    assert sql(f"SELECT count(*) FROM public.task_instance_events WHERE instance_id='{instance}';").stdout.strip() == '2'
+    print('PASS: waiting completion rejects deactivated actor', flush=True)
+    for isolation in ['REPEATABLE READ', 'SERIALIZABLE']:
+        for operation in ['complete','reopen']:
+            r = sql(f'BEGIN ISOLATION LEVEL {isolation};' + task_call('manager', operation), check=False)
+            assert r.returncode != 0 and 'require READ COMMITTED' in r.stderr, r.stderr
+    print('PASS: task writes reject unsupported isolation levels', flush=True)
+
 finally:
     for proc in sessions:
         if proc.poll() is None:
