@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useTasks } from '@/hooks/use-tasks'
 import { Ring, SalesChart } from '@/components/charts'
 import { Ic } from '@/components/icons'
-import { BRANDS, ROLES, TODAY } from '@/lib/config'
+import { BRANDS, ROLES } from '@/lib/config'
 import { statusColor } from '@/lib/format'
 import { LOCATION_DATA, SALES } from '@/lib/mock-data'
 import { type Brand, type Role } from '@/lib/types'
@@ -29,15 +29,19 @@ export function DashboardScreen({ role, brand, userName }: { role: Role; brand: 
     { label: 'Tasks Today', value: `${doneCount}/${tasks.length}`, sub: 'At this location', trend: null },
   ]
 
+  // The dashboard only renders on the client (after the session loads), so the
+  // viewer's local clock is safe to use here without a hydration mismatch.
+  const now = new Date()
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
       {/* Greeting */}
       <div>
         <h1 className="text-xl font-semibold text-stone-900">
-          Good morning, {(userName ?? ROLES[role].name).split(' ')[0]}
+          {greeting(now)}, {(userName ?? ROLES[role].name).split(' ')[0]}
         </h1>
         <p className="text-sm text-stone-500 mt-0.5">
-          {new Date(TODAY + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {BRANDS[brand].name}
+          {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {BRANDS[brand].name}
         </p>
       </div>
 
@@ -164,4 +168,11 @@ export function DashboardScreen({ role, brand, userName }: { role: Role; brand: 
       )}
     </div>
   )
+}
+
+function greeting(now: Date): string {
+  const hour = now.getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
 }

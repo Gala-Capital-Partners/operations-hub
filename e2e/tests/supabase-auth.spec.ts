@@ -71,7 +71,7 @@ test.describe('Real sign-in (Supabase)', () => {
     await signInWithPassword(page, 'taylor.kim@opshub.test')
     await expect(account(page).getByText('Taco Verde', { exact: true })).toBeVisible()
     await expect(account(page).getByText('Taylor Kim', { exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Good morning, Taylor' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Taylor$/ })).toBeVisible()
     await expect(account(page).getByText('OpsHub · 1 location')).toBeVisible()
   })
 
