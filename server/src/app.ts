@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { type RequestHandler } from 'express';
 import { createMeRouter } from './routes/me.routes.js';
 import { createTaskDefinitionRouter } from './routes/task-definitions.routes.js';
+import { createTaskInstancesRouter } from './routes/task-instances.routes.js';
 
 export function createApp(deps: { pool?: Pool; requireAuth?: RequestHandler } = {}) {
   const app = express()
@@ -20,6 +21,7 @@ export function createApp(deps: { pool?: Pool; requireAuth?: RequestHandler } = 
   if (deps.pool && deps.requireAuth) {
     app.use('/api/me', createMeRouter({ pool: deps.pool, requireAuth: deps.requireAuth }))
     app.use('/api/task-definitions', createTaskDefinitionRouter({ pool: deps.pool, requireAuth: deps.requireAuth }))
+    app.use('/api/task-instances', createTaskInstancesRouter({pool: deps.pool, requireAuth: deps.requireAuth}))
   }
 
   app.get('/api/health', (_req, res) => {
