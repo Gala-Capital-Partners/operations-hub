@@ -2,7 +2,7 @@
 
 Status: definition creation, bounded recurrence-date expansion, and controlled
 instance insertion are implemented. Definition creation now generates its initial
-instances atomically.
+instances atomically. The daily GitHub Actions workflow runs the scheduler command.
 
 ## Backend recurrence validation
 
@@ -63,7 +63,8 @@ subject to end_date and the DST policy below. Confirm that UI wording with the t
   returning matching dates and the number of newly inserted instances.
 
 The caller owns the transaction. A manager calls the service inside
-`withUserTransaction` with a verified actor. Do not expose raw date arrays
+`withUserTransaction` with a verified actor. The scheduler uses its dedicated
+login and `SET LOCAL ROLE operations_hub_scheduler`. Do not expose raw date arrays
 or accept definition snapshots/version tokens/timezone filters from browser input: the backend
 loads the authoritative schedule and expands it itself.
 
@@ -76,7 +77,7 @@ stores before insertion. A brand spanning midnight boundaries gets separate loca
 windows, not the union of dates inserted at every store. Timezone lists come from
 the authorized SQL input readers, not request fields.
 
-Creation defaults to zero catch-up: no past local
+Both creation and the scheduler default to zero catch-up: no past local
 days are generated, but today's slots
 are included even if their times have passed. A definition starting after the
 seven-day horizon is saved with no instances yet. Already-ended definitions also
@@ -89,6 +90,11 @@ The optional nonzero catch-up argument is an explicit backfill override, not a
 scheduler default. Before using it, establish which definitions/stores were
 eligible on each historical date; the helper does not reconstruct creation or
 activation history. Existing completion/history is never overwritten.
+
+The daily workflow runs at 10:17 UTC and accepts manual runs on `main`. Before
+the demo, verify a hosted run with the restricted scheduler credential and
+inspect its summary. See [Running the task scheduler](../server/README.md#running-the-task-scheduler)
+for setup, local commands, and failure recovery.
 
 The original start date anchors INTERVAL and COUNT on every call. end_date clips
 the window; a one-off emits only start_date. COUNT counts calendar dates, not slots
@@ -125,6 +131,7 @@ The new generator migration is an unmerged draft; its entry points now accept
 optional target-timezone filter. The input readers also return target_timezones. If an earlier draft was
 already applied to a retained local database, do not assume migration up will
 replay it. Use a reviewed forward migration, or rebuild only a disposable database.
+The hosted scheduler provisioning script is optional until scheduling is enabled.
 
 Tests: `server/test/generator.test.ts` covers recurrence windows/COUNT/INTERVAL and
 service calls; `supabase/tests/task_instance_generator_verification.sql` covers
@@ -140,7 +147,7 @@ The disposable concurrency harness also checks duplicate generation across calls
 - Reuse the same scheduled instant on retries; never overwrite historical rows.
 - Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
 - Generation and definition writers are implemented; direct runtime table
-  writes remain denied. Creation uses the shared generator. See
+  writes remain denied. Creation and scheduled runs both use the shared generator. See
   [task completion](task-completion.md).
 
 ## Ownership and scope
@@ -149,7 +156,7 @@ GCP's kickoff calls for RRULE recurrence through a library and an idempotent
 `materialize_task_instances(run_date)` operation. Student A provides the schema,
 constraints, permissions, and SQL verification. This task-definition creation
 work also implements backend recurrence validation with rrule 2.8.1. The shared
-generation service supports on-create generation.
+generation service supports on-create generation and the daily scheduler.
 Coordinate that work with the team and reuse the contract documented here.
 
 ## Database contract
