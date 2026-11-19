@@ -1,5 +1,9 @@
 import type { Pool } from 'pg';
 import type { RequestHandler } from 'express';
+import {
+  loadManagerGenerationDefinition,
+  generateRollingTaskInstances,
+} from '../scheduling/generator.js';
 import { withUserTransaction } from '../db/transaction.js';
 import {
   normalizeTaskDefinitionBody,
@@ -36,7 +40,7 @@ function toDefinitionResponse(row: TaskDefinitionRow) {
     endDate: row.end_date,
     scheduleMode: row.schedule_mode,
     // Creation accepts minute precision; PostgreSQL returns HH:mm:ss.
-    scheduledTimes: row.scheduled_times.map(time => time.slice(0, 5)),
+    scheduledTimes: row.scheduled_times.map((time) => time.slice(0, 5)),
     dueTime: row.due_time === null ? null : row.due_time.slice(0, 5),
     numericUnit: row.numeric_unit,
     // API bounds originate as finite JS numbers; arbitrary-precision input is not supported.
@@ -68,40 +72,76 @@ export function createTaskDefinitionController(pool: Pool): RequestHandler {
     }
     const actorId: unknown = res.locals.actorId;
     if (typeof actorId !== 'string' || !actorId) {
-      return res.status(401).json({ error: { message: 'Authentication required' } });
+      return res
+        .status(401)
+        .json({ error: { message: 'Authentication required' } });
     }
     const input = validated.value;
     try {
-      const definition = await withUserTransaction(pool, actorId, async db => {
-        const data = await db.query<TaskDefinitionRow>(createDefinitionQuery, [
-          input.brandId, input.locationId, input.name, input.description,
-          input.category, input.recurrenceRule, input.startDate, input.endDate,
-          input.scheduleMode, input.scheduledTimes, input.dueTime,
-          input.numericUnit, input.numericMin, input.numericMax,
-        ]);
-        if (data.rows.length !== 1) {
-          throw new Error('Definition creation did not return exactly one row');
-        }
-        return toDefinitionResponse(data.rows[0]);
-      });
-      // Only report success after COMMIT; this does not generate instances.
+      const definition = await withUserTransaction(
+        pool,
+        actorId,
+        async (db) => {
+          const data = await db.query<TaskDefinitionRow>(
+            createDefinitionQuery,
+            [
+              input.brandId,
+              input.locationId,
+              input.name,
+              input.description,
+              input.category,
+              input.recurrenceRule,
+              input.startDate,
+              input.endDate,
+              input.scheduleMode,
+              input.scheduledTimes,
+              input.dueTime,
+              input.numericUnit,
+              input.numericMin,
+              input.numericMax,
+            ],
+          );
+          if (data.rows.length !== 1) {
+            throw new Error(
+              'Definition creation did not return exactly one row',
+            );
+          }
+          const generation = await loadManagerGenerationDefinition(
+            db,
+            data.rows[0].id,
+          );
+          // Capture the clock after database work/lock waits. Every target uses this
+          // same instant, interpreted in its own timezone. Failures roll back creation.
+          await generateRollingTaskInstances(db, generation, new Date());
+          return toDefinitionResponse(data.rows[0]);
+        },
+      );
+      // Only report success after the definition and initial instances COMMIT together.
       return res.status(201).json(definition);
     } catch (error) {
-      const code = typeof error === 'object' && error !== null && 'code' in error
-        ? error.code : undefined;
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? error.code
+          : undefined;
       if (code === '42501') {
         return res.status(403).json({
           error: {
             code: 'TASK_DEFINITION_FORBIDDEN',
-            message: 'You are not authorized to create a task definition for this target.',
+            message:
+              'You are not authorized to create a task definition for this target.',
           },
         });
       }
-      if (['23514', '23502', '22007', '22008', '22P02', '22003'].includes(String(code))) {
+      if (
+        ['23514', '23502', '22007', '22008', '22P02', '22003'].includes(
+          String(code),
+        )
+      ) {
         return res.status(400).json({
           error: {
             code: 'INVALID_TASK_DEFINITION',
-            message: 'Task definition does not satisfy the database constraints.',
+            message:
+              'Task definition does not satisfy the database constraints.',
           },
         });
       }
