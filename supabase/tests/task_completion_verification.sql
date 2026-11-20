@@ -47,6 +47,7 @@ DECLARE
     place record;
     instance uuid;
     before_row jsonb;
+    events_before bigint;
     bad text;
 BEGIN
     INSERT INTO public.organizations(id, name) VALUES(org_a,'Task read A'), (org_b,'Task read B');
@@ -97,6 +98,8 @@ BEGIN
     UPDATE public.task_instances SET numeric_min_snapshot = 0, numeric_max_snapshot = 100 WHERE
         id = instance;
     SELECT to_jsonb(i) INTO before_row FROM public.task_instances i WHERE id = instance;
+    -- Compare event counts (not emptiness) so the check also holds on a seeded database.
+    SELECT count(*) INTO events_before FROM public.task_instance_events;
     PERFORM pg_temp.call_task(
         NULL, format('SELECT public.complete_task_instance(%L)', instance),'42501'
     );
@@ -140,7 +143,7 @@ BEGIN
     );
     IF (SELECT to_jsonb(i) FROM public.task_instances i WHERE id = instance) IS DISTINCT FROM
         before_row
-        OR EXISTS(SELECT 1 FROM public.task_instance_events) THEN
+        OR (SELECT count(*) FROM public.task_instance_events) <> events_before THEN
         RAISE EXCEPTION 'Denied/invalid operations changed data';
     END IF;
     PERFORM pg_temp.call_task(
@@ -242,7 +245,8 @@ BEGIN
     -- Select a location-role actor and its assigned instance deterministically.
     SELECT t.id, ul.user_id INTO i, a FROM public.task_instances t JOIN public.user_locations ul ON
         ul.location_id = t.location_id
-        JOIN public.roles r ON r.id = ul.role_id WHERE r.key = 'employee' LIMIT 1;
+        JOIN public.roles r ON r.id = ul.role_id
+        WHERE r.key = 'employee' AND t.completed_at IS NULL LIMIT 1;
     SELECT to_jsonb(t) INTO original FROM public.task_instances t WHERE id = i;
     SELECT count(*) INTO events FROM public.task_instance_events;
     PERFORM pg_temp.call_task(

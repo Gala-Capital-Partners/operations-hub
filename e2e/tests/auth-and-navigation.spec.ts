@@ -23,7 +23,7 @@ test.describe('Sign-in and role-based access', () => {
     await page.getByRole('button', { name: 'Sign in to OpsHub' }).click()
     await expect(page).toHaveURL(/\/dashboard$/)
     const session = await page.evaluate(() => JSON.parse(localStorage.getItem('opshub.session') ?? 'null'))
-    expect(session).toEqual({ role: 'manager', brand: 'tacoverde' })
+    expect(session).toEqual({ mode: 'demo', role: 'manager', brand: 'tacoverde' })
   })
 
   test('session survives a page reload', async ({ page }) => {

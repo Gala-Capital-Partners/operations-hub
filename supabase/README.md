@@ -32,6 +32,30 @@ Starting a fresh local stack can already apply the migrations. `migration up --l
 
 Use `npx supabase status` to find your local Studio and database connection details. Keep keys and connection credentials out of commits, screenshots, and review descriptions. Local setup does not require linking to the shared project.
 
+## Local seed data and sign-in
+
+`seed.sql` loads synthetic data for local development and demos. The CLI runs it when a fresh local stack starts and on `npx supabase db reset --local` (`[db.seed]` in `config.toml`). The deploy workflow uses `supabase db push`, which never loads seeds, so it does not reach the shared project.
+
+It creates one organization, two brands (BurgerCraft, Taco Verde), seven locations, eleven task definitions, and task instances from three days before to seven days after the day it runs (there is no instance generator yet; reset to move the window). Most past instances are completed, with matching completion events.
+
+| Email | Role | Scope |
+| --- | --- | --- |
+| `alex.chen@opshub.test` | Organization Admin | Whole organization |
+| `maria.santos@opshub.test` | Brand Admin | BurgerCraft |
+| `jordan.lee@opshub.test` | Location Manager | BurgerCraft · Downtown Flagship |
+| `sam.rivera@opshub.test` | Employee | BurgerCraft · Downtown Flagship |
+| `taylor.kim@opshub.test` | Location Manager | Taco Verde · Harbor View |
+
+Every account's local password is `opshub-local-dev`. These are local-only fixtures; never create them in the shared project.
+
+To sign in through the app locally:
+
+1. `npx supabase start` (applies migrations and the seed on a fresh stack). On an existing stack, `npx supabase db reset --local` reloads everything.
+2. Provision the backend login once with [`setup/create_backend_login.sql`](setup/create_backend_login.sql), then set its password, for example in Studio's SQL editor: `ALTER ROLE operations_hub_api PASSWORD '<choose-a-local-password>';`. Recreating the local database requires provisioning it again.
+3. In `server/.env`, set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` (from `npx supabase status`) and `DATABASE_URL` with that password.
+4. In `client/.env.local`, set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the same URL and publishable key. Leaving them empty keeps the demo role picker.
+5. `npm run dev:server` and `npm run dev:client`, then sign in with an account above.
+
 ## Migration order
 
 The CLI applies files in timestamp order. Do not apply only the final file to an empty database.
