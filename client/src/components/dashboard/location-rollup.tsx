@@ -6,8 +6,17 @@ import { statusColor } from '@/lib/format'
 
 /** Live manager rollup: task completion for every store the user can read. */
 export function LocationRollup({ date }: { date: string }) {
-  const { summary, loading, error, reload } = useTaskSummary(date)
-  return <LocationRollupView date={date} summary={summary} loading={loading} error={error} onRetry={() => void reload()} />
+  const { summary, loading, error, forbidden, reload } = useTaskSummary(date)
+  return (
+    <LocationRollupView
+      date={date}
+      summary={summary}
+      loading={loading}
+      error={error}
+      forbidden={forbidden}
+      onRetry={() => void reload()}
+    />
+  )
 }
 
 export function LocationRollupView({
@@ -15,12 +24,14 @@ export function LocationRollupView({
   summary,
   loading,
   error,
+  forbidden = false,
   onRetry,
 }: {
   date: string
   summary: TaskSummary | null
   loading: boolean
   error: string | null
+  forbidden?: boolean
   onRetry: () => void
 }) {
   const locations = summary?.locations ?? []
@@ -46,7 +57,9 @@ export function LocationRollupView({
         </span>
       </div>
 
-      {error ? (
+      {forbidden ? (
+        <p className="px-5 py-4 text-sm text-stone-500">Store reports are available to managers and admins.</p>
+      ) : error ? (
         <div role="alert" className="px-5 py-4 flex items-center justify-between gap-3 bg-red-50">
           <p className="text-sm text-red-700">{error}</p>
           <button onClick={onRetry} className="text-xs font-medium text-red-700 underline flex-shrink-0">
