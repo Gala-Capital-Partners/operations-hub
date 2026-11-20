@@ -284,7 +284,7 @@ verification of this list contract remain pending teammate work.
 
 ### GET /api/task-instances/summary
 
-Returns one row per store the caller can read tasks for, with task counts for
+Returns one row per store the caller can view reports for, with task counts for
 one calendar day. This feeds the manager rollup on the dashboard. Send a bearer
 access token and one query parameter:
 
@@ -300,14 +300,16 @@ curl -i --get 'http://localhost:4000/api/task-instances/summary' \
   --data-urlencode 'date=2026-11-19'
 ```
 
-Scope comes from `current_location_ids_with('task_instances.read')`, the same
-check the listing endpoint uses, and the query runs through
-`withUserTransaction` with RLS enforced. Employees and Location Managers see
-their assigned stores, Brand Admins every active store in their brand, and
-Organization Admins every active store in their organization. Stores with no
+Scope comes from `current_location_ids_with('reports.read')`, the manager
+report permission from the permission matrix, and the query runs through
+`withUserTransaction` with RLS enforced. Location Managers see the stores they
+manage, Brand Admins every active store in their brand, and Organization Admins
+every active store in their organization. Employees do not have
+`reports.read`, so an employee-only caller gets 403. Someone who manages one
+store and is an employee at another sees only the managed store. Stores with no
 tasks that day are included with zero counts, so a manager can spot stores
-that have nothing scheduled. A caller with no readable stores gets an empty list,
-not 403.
+that have nothing scheduled. A caller who holds `reports.read` but has no
+active stores in scope gets an empty list.
 
 ```json
 {
@@ -338,6 +340,7 @@ instances; it does not mean overdue, because overdue rules are not yet decided
 | 200 | Summary, possibly with an empty `locations` list. |
 | 400 | `INVALID_DATE`. |
 | 401 | Missing, malformed, invalid, or expired authentication. |
+| 403 | `REPORT_FORBIDDEN`: the caller holds `reports.read` nowhere, including employee-only users and inactive or missing identities. |
 | 503 | Authentication service returns an error other than an invalid-token 401/403. |
 | 500 | Unexpected failure, including database errors. |
 
