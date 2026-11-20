@@ -44,9 +44,12 @@ const readQuery = `
   ORDER BY t.scheduled_at, t.id
 `;
 
-// One row per active location where the caller has task_instances.read,
-// including locations with no instances on that day (LEFT JOIN).
-// RLS still applies to every table. Keep in sync with
+// One row per active location where the caller has reports.read (the manager
+// report permission; employees do not have it), including locations with no
+// instances on that day (LEFT JOIN). A user who manages one store and works as
+// an employee at another sees only the managed store. RLS still applies to
+// every table; every role with reports.read at a location also has
+// task_instances.read there, so the counts are complete. Keep in sync with
 // supabase/tests/task_summary_verification.sql.
 const summaryQuery = `
   SELECT
@@ -59,7 +62,7 @@ const summaryQuery = `
     count(t.id)::int AS total,
     count(t.completed_at)::int AS completed
   FROM identity_access.current_location_ids_with(
-    'task_instances.read'
+    'reports.read'
   ) AS permitted(location_id)
   JOIN public.locations AS l
     ON l.id = permitted.location_id
@@ -70,6 +73,16 @@ const summaryQuery = `
     AND t.scheduled_day = $1
   GROUP BY l.id, l.name, l.store_number, l.timezone, b.id, b.name
   ORDER BY b.name, l.name, l.id
+`;
+
+// Whether the caller holds reports.read at any scope. Separates "not allowed
+// to see reports" (403) from "allowed, but no active stores" (empty 200).
+const reportAccessQuery = `
+  SELECT EXISTS (
+    SELECT 1
+    FROM identity_access.current_user_permissions() AS p
+    WHERE p.permission_key = 'reports.read'
+  ) AS allowed
 `;
 
 const locationAccessQuery = `
@@ -438,10 +451,24 @@ export function createTaskSummaryController(pool: Pool): RequestHandler {
       pool,
       res.locals.actorId,
       async (db) => {
+        const access = await db.query<{ allowed: boolean }>(reportAccessQuery);
+        if (!access.rows[0].allowed) {
+          return null;
+        }
+
         const data = await db.query<TaskSummaryRow>(summaryQuery, [date]);
         return data.rows;
       },
     );
+
+    if (rows === null) {
+      return res.status(403).json({
+        error: {
+          code: 'REPORT_FORBIDDEN',
+          message: 'You are not authorized to view the task summary.',
+        },
+      });
+    }
 
     return res.status(200).json(toSummaryResponse(date, rows));
   };

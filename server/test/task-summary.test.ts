@@ -12,13 +12,14 @@ const ACTOR = '11111111-1111-4111-8111-111111111111'
 
 type Call = { sql: string; params?: unknown[] }
 
-function fakePool(summaryRows: unknown[] = []) {
+function fakePool(summaryRows: unknown[] = [], canReadReports = true) {
   const calls: Call[] = []
   let released = 0
   const client = {
     async query(sql: string, params?: unknown[]) {
       calls.push({ sql, params })
-      if (sql.includes('task_instances.read')) return { rows: summaryRows }
+      if (sql.includes('current_user_permissions')) return { rows: [{ allowed: canReadReports }] }
+      if (sql.includes('current_location_ids_with')) return { rows: summaryRows }
       return { rows: [] }
     },
     release() {
@@ -39,8 +40,8 @@ const fakeAuth: RequestHandler = (req, res, next) => {
   next()
 }
 
-function app(rows: unknown[] = []) {
-  const db = fakePool(rows)
+function app(rows: unknown[] = [], canReadReports = true) {
+  const db = fakePool(rows, canReadReports)
   return { app: createApp({ pool: db.pool, requireAuth: fakeAuth }), db }
 }
 
@@ -99,7 +100,9 @@ describe('GET /api/task-instances/summary', () => {
     expect(sql[0]).toBe('BEGIN')
     expect(sql[1]).toBe('SET LOCAL ROLE operations_hub_runtime')
     expect(db.calls[2].params).toEqual([ACTOR])
-    expect(db.calls[3].params).toEqual(['2026-11-19'])
+    expect(sql[3]).toContain("permission_key = 'reports.read'")
+    expect(sql[4]).toContain("current_location_ids_with(\n    'reports.read'")
+    expect(db.calls[4].params).toEqual(['2026-11-19'])
     expect(sql.at(-1)).toBe('COMMIT')
     expect(db.released()).toBe(1)
   })
@@ -126,7 +129,20 @@ describe('GET /api/task-instances/summary', () => {
     })
   })
 
-  it('returns empty totals when the user can read no locations', async () => {
+  it('returns 403 when the user has no reports.read anywhere (employee only)', async () => {
+    const { app: server, db } = app(rows, false)
+    const res = await request(server)
+      .get('/api/task-instances/summary')
+      .set('Authorization', 'Bearer token')
+      .query({ date: '2026-11-19' })
+    expect(res.status).toBe(403)
+    expect(res.body.error.code).toBe('REPORT_FORBIDDEN')
+    expect(db.calls.some(c => c.sql.includes('current_location_ids_with'))).toBe(false)
+    expect(db.calls.at(-1)?.sql.trim()).toBe('COMMIT')
+    expect(db.released()).toBe(1)
+  })
+
+  it('returns empty totals when the user can view reports but has no active stores', async () => {
     const { app: server } = app([])
     const res = await request(server)
       .get('/api/task-instances/summary')
