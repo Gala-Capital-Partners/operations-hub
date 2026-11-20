@@ -3,13 +3,27 @@
 import Link from 'next/link'
 import { useTasks } from '@/hooks/use-tasks'
 import { Ring, SalesChart } from '@/components/charts'
+import { LocationRollup } from '@/components/dashboard/location-rollup'
 import { Ic } from '@/components/icons'
 import { BRANDS, ROLES } from '@/lib/config'
+import { localToday } from '@/lib/api/task-instances'
 import { statusColor } from '@/lib/format'
 import { LOCATION_DATA, SALES } from '@/lib/mock-data'
 import { type Brand, type Role } from '@/lib/types'
 
-export function DashboardScreen({ role, brand, userName }: { role: Role; brand: Brand; /** Signed-in user's name; the demo uses a placeholder person */ userName?: string }) {
+export function DashboardScreen({
+  role,
+  brand,
+  userName,
+  live = false,
+}: {
+  role: Role
+  brand: Brand
+  /** Signed-in user's name; the demo uses a placeholder person */
+  userName?: string
+  /** Real Supabase session: the location rollup uses database tasks instead of mock data */
+  live?: boolean
+}) {
   const latest = SALES[SALES.length - 1]
   const diff = latest.today - latest.yesterday
   const pctStr = ((diff / latest.yesterday) * 100).toFixed(1)
@@ -140,8 +154,11 @@ export function DashboardScreen({ role, brand, userName }: { role: Role; brand: 
         </div>
       </div>
 
-      {/* Location rollup — corporate/brand only */}
-      {(role === 'corporate' || role === 'brand') && (
+      {/* Location rollup — live for managers and admins; mock data in the demo */}
+      {live && role !== 'employee' && (
+        <LocationRollup date={localToday(Intl.DateTimeFormat().resolvedOptions().timeZone, now)} />
+      )}
+      {!live && (role === 'corporate' || role === 'brand') && (
         <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
           <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-stone-900">Task Completion by Location</h2>
