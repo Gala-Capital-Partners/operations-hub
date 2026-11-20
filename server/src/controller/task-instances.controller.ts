@@ -1,6 +1,10 @@
 import { type RequestHandler } from 'express';
 import { withUserTransaction } from '../db/transaction.js';
-import type { TaskInstanceStateRow, TaskInstanceListRow } from '../types/task-instance.js';
+import type {
+  TaskInstanceStateRow,
+  TaskInstanceListRow,
+  TaskSummaryRow,
+} from '../types/task-instance.js';
 import { Pool } from 'pg';
 
 const UUID_PATTERN =
@@ -38,6 +42,34 @@ const readQuery = `
   WHERE t.location_id = $1
     AND t.scheduled_day = $2
   ORDER BY t.scheduled_at, t.id
+`;
+
+// One row per active location where the caller has task_instances.read,
+// including locations with no instances on that day (LEFT JOIN).
+// RLS still applies to every table. Keep in sync with
+// supabase/tests/task_summary_verification.sql.
+const summaryQuery = `
+  SELECT
+    l.id AS location_id,
+    l.name AS location_name,
+    l.store_number,
+    l.timezone,
+    b.id AS brand_id,
+    b.name AS brand_name,
+    count(t.id)::int AS total,
+    count(t.completed_at)::int AS completed
+  FROM identity_access.current_location_ids_with(
+    'task_instances.read'
+  ) AS permitted(location_id)
+  JOIN public.locations AS l
+    ON l.id = permitted.location_id
+  JOIN public.brands AS b
+    ON b.id = l.brand_id
+  LEFT JOIN public.task_instances AS t
+    ON t.location_id = l.id
+    AND t.scheduled_day = $1
+  GROUP BY l.id, l.name, l.store_number, l.timezone, b.id, b.name
+  ORDER BY b.name, l.name, l.id
 `;
 
 const locationAccessQuery = `
@@ -84,6 +116,35 @@ function toTaskListResponse(rows: TaskInstanceListRow[]) {
     numericMin: toOptionalNumber(row.numeric_min_snapshot),
     numericMax: toOptionalNumber(row.numeric_max_snapshot),
   }));
+}
+
+function toSummaryResponse(date: string, rows: TaskSummaryRow[]) {
+  const locations = rows.map((row) => ({
+    locationId: row.location_id,
+    locationName: row.location_name,
+    storeNumber: row.store_number,
+    timezone: row.timezone,
+    brandId: row.brand_id,
+    brandName: row.brand_name,
+    total: row.total,
+    completed: row.completed,
+    remaining: row.total - row.completed,
+  }));
+
+  const total = locations.reduce((sum, l) => sum + l.total, 0);
+  const completed = locations.reduce((sum, l) => sum + l.completed, 0);
+
+  return {
+    date,
+    totals: {
+      locations: locations.length,
+      locationsWithoutTasks: locations.filter((l) => l.total === 0).length,
+      total,
+      completed,
+      remaining: total - completed,
+    },
+    locations,
+  };
 }
 
 function mapTaskWriteError(err: unknown) {
@@ -356,5 +417,32 @@ export function createTaskReadController(pool: Pool): RequestHandler {
     }
 
     return res.status(200).json({ tasks: result });
+  };
+}
+
+export function createTaskSummaryController(pool: Pool): RequestHandler {
+  return async (req, res) => {
+    const date = req.query.date;
+
+    if (!isCalendarDate(date)) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_DATE',
+          message:
+            'Date must be a valid YYYY-MM-DD calendar date between 2000 and 2199.',
+        },
+      });
+    }
+
+    const rows = await withUserTransaction(
+      pool,
+      res.locals.actorId,
+      async (db) => {
+        const data = await db.query<TaskSummaryRow>(summaryQuery, [date]);
+        return data.rows;
+      },
+    );
+
+    return res.status(200).json(toSummaryResponse(date, rows));
   };
 }
