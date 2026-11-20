@@ -1,6 +1,6 @@
 # Operations Hub — Backend
 
-Express 5 + TypeScript API with Supabase authentication and PostgreSQL-backed identity access. `/api/me` reads the authenticated user's application profile and scoped access. The protected `/api/task-instances` endpoints list, complete, and reopen PostgreSQL task instances. The prototype `/api/tasks` routes still use an in-memory store; restarting the server resets that prototype data. Those prototype routes, including the demo reset route, remain public.
+Express 5 + TypeScript API with Supabase authentication and PostgreSQL-backed identity access. `/api/me` reads the authenticated user's application profile and scoped access. The protected `/api/task-instances` endpoints list, summarize, complete, and reopen PostgreSQL task instances. The prototype `/api/tasks` routes still use an in-memory store; restarting the server resets that prototype data. Those prototype routes, including the demo reset route, remain public.
 
 ## Local setup
 
@@ -280,6 +280,74 @@ This endpoint returns current instance state, not audit history, and does not
 generate missing instances. Dedicated endpoint tests and real-database HTTP
 verification of this list contract remain pending teammate work.
 
+## Manager task summary
+
+### GET /api/task-instances/summary
+
+Returns one row per store the caller can view reports for, with task counts for
+one calendar day. This feeds the manager rollup on the dashboard. Send a bearer
+access token and one query parameter:
+
+| Parameter | Requirement |
+| --- | --- |
+| `date` | Required. Same rules as the listing endpoint: one real `YYYY-MM-DD` date between 2000 and 2199. |
+
+The date filters each store's `scheduled_day`; there is no implicit “today”.
+
+```bash
+curl -i --get 'http://localhost:4000/api/task-instances/summary' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  --data-urlencode 'date=2026-11-19'
+```
+
+Scope comes from `current_location_ids_with('reports.read')`, the manager
+report permission from the permission matrix, and the query runs through
+`withUserTransaction` with RLS enforced. Location Managers see the stores they
+manage, Brand Admins every active store in their brand, and Organization Admins
+every active store in their organization. Employees do not have
+`reports.read`, so an employee-only caller gets 403. Someone who manages one
+store and is an employee at another sees only the managed store. Stores with no
+tasks that day are included with zero counts, so a manager can spot stores
+that have nothing scheduled. A caller who holds `reports.read` but has no
+active stores in scope gets an empty list.
+
+```json
+{
+  "date": "2026-11-19",
+  "totals": { "locations": 2, "locationsWithoutTasks": 1, "total": 5, "completed": 3, "remaining": 2 },
+  "locations": [
+    {
+      "locationId": "<location-uuid>",
+      "locationName": "Downtown Flagship",
+      "storeNumber": "101",
+      "timezone": "America/Los_Angeles",
+      "brandId": "<brand-uuid>",
+      "brandName": "BurgerCraft",
+      "total": 5,
+      "completed": 3,
+      "remaining": 2
+    }
+  ]
+}
+```
+
+Locations are ordered by brand name, then store name. `remaining` counts open
+instances; it does not mean overdue, because overdue rules are not yet decided
+(see [task-recurrence.md](../docs/task-recurrence.md)).
+
+| Status | Meaning / error code |
+| --- | --- |
+| 200 | Summary, possibly with an empty `locations` list. |
+| 400 | `INVALID_DATE`. |
+| 401 | Missing, malformed, invalid, or expired authentication. |
+| 403 | `REPORT_FORBIDDEN`: the caller holds `reports.read` nowhere, including employee-only users and inactive or missing identities. |
+| 503 | Authentication service returns an error other than an invalid-token 401/403. |
+| 500 | Unexpected failure, including database errors. |
+
+Scoping is verified against a real database in
+[task_summary_verification.sql](../supabase/tests/task_summary_verification.sql),
+which runs the same query; keep the two in sync.
+
 ## Task-instance completion and reopening
 
 These endpoints operate on existing PostgreSQL task instances using UUIDs, not
@@ -398,7 +466,7 @@ No deadline, future-date, or historical cutoff is enforced by these operations.
 
 `src/controller/me.controller.ts` owns the profile/access queries, response mapping, and the 403 response for a missing active profile. It receives the pool through its factory and reads the verified actor ID from `res.locals.actorId`; it does not create connections or authenticate tokens itself. Database operations run through `withUserTransaction`, and unexpected errors propagate to the application error handler.
 
-`src/routes/task-instances.routes.ts` creates the list/completion/reopening controllers and connects authentication and handlers; POST routes also check JSON content types. `src/controller/task-instances.controller.ts` validates inputs and maps responses. Listing checks scoped read access and performs an RLS-protected query. Writes call controlled SQL functions and translate recognized SQL errors after rollback; unexpected errors propagate to the application error handler.
+`src/routes/task-instances.routes.ts` creates the list/summary/completion/reopening controllers and connects authentication and handlers; POST routes also check JSON content types. `src/controller/task-instances.controller.ts` validates inputs and maps responses. Listing checks scoped read access and performs an RLS-protected query. Writes call controlled SQL functions and translate recognized SQL errors after rollback; unexpected errors propagate to the application error handler.
 
 When adding a protected route, attach authentication before the controller and pass dependencies into the controller factory. Keep URL/middleware wiring in the router and request-handling behavior in the controller. The existing Tasks routes have not yet been moved into controllers.
 
@@ -432,7 +500,7 @@ npm run build:server
 npm run test:server       # from the repo root (CI runs this on every pull request)
 ```
 
-API integration tests live in `test/` and use [Vitest](https://vitest.dev) + [Supertest](https://github.com/ladjs/supertest) against `createApp()` — no separately started backend is needed; Supertest opens a temporary local listener. The in-memory store is reset before each test. Case IDs in test names (e.g. `API-04`) refer to `docs/QA.md`. The current suite covers the Tasks API and health/unknown routes; it does not exercise `/api/me` or the database-backed task-instance endpoints. Manual verification results belong in the PR description; these endpoints still need dedicated automated HTTP coverage.
+API integration tests live in `test/` and use [Vitest](https://vitest.dev) + [Supertest](https://github.com/ladjs/supertest) against `createApp()` — no separately started backend is needed; Supertest opens a temporary local listener. The in-memory store is reset before each test. Case IDs in test names (e.g. `API-04`) refer to `docs/QA.md`. The current suite covers the Tasks API, health/unknown routes, and the request handling of `GET /api/task-instances/summary` (with a fake pool); it does not exercise `/api/me` or the other database-backed task-instance endpoints. Manual verification results belong in the PR description; these endpoints still need dedicated automated HTTP coverage.
 
 ## Prototype task model
 
