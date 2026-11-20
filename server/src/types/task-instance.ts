@@ -20,3 +20,14 @@ export type TaskInstanceListRow = TaskInstanceStateRow & {
   numeric_min_snapshot: string | null;
   numeric_max_snapshot: string | null;
 };
+
+export type TaskSummaryRow = {
+  location_id: string;
+  location_name: string;
+  store_number: string | null;
+  timezone: string;
+  brand_id: string;
+  brand_name: string;
+  total: number;
+  completed: number;
+};

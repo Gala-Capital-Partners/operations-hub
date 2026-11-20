@@ -3,7 +3,8 @@ import { type Pool } from 'pg';
 import {
   createTaskCompleteController,
   createTaskReopenController,
-  createTaskReadController
+  createTaskReadController,
+  createTaskSummaryController,
 } from '../controller/task-instances.controller.js';
 
 const requireJsonBody: RequestHandler = (req, res, next) => {
@@ -33,6 +34,7 @@ export function createTaskInstancesRouter(deps: {
   const completeTask = createTaskCompleteController(deps.pool);
   const reopenTask = createTaskReopenController(deps.pool);
   const readTask = createTaskReadController(deps.pool);
+  const summarizeTasks = createTaskSummaryController(deps.pool);
 
   router.post(
     '/:id/complete',
@@ -51,6 +53,12 @@ export function createTaskInstancesRouter(deps: {
     '/',
     deps.requireAuth,
     readTask,
+  );
+
+  router.get(
+    '/summary',
+    deps.requireAuth,
+    summarizeTasks,
   );
 
   return router;
