@@ -1,0 +1,47 @@
+name: Generate task instances
+
+# Nightly replenishment of task instances on the shared project: each run fills
+# every active definition's next seven local days (today forward, no backfill).
+# Reruns are idempotent. See docs/task-recurrence.md and server/README.md.
+
+on:
+  schedule:
+    # 10:17 UTC = 02:17 Pacific standard time (03:17 during daylight time).
+    # GitHub may start scheduled runs late; the seven-day window absorbs delays.
+    - cron: "17 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two generations at once; let a running one finish.
+concurrency:
+  group: generate-task-instances
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate task instances
+    # Scheduled runs only exist on main; manual runs must also target main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Holds TASK_SCHEDULER_DATABASE_URL (the restricted scheduler login, not the
+    # admin deploy URL). Provisioned with supabase/setup/create_scheduler_login.sql.
+    environment: supabase-shared
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build:server
+
+      - name: Generate task instances
+        env:
+          TASK_SCHEDULER_DATABASE_URL: ${{ secrets.TASK_SCHEDULER_DATABASE_URL }}
+        run: npm run generate:tasks --workspace=server

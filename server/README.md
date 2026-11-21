@@ -185,7 +185,10 @@ recurrence still restrict occurrences. A future definition outside this window
 can return 201 with no instances yet. Any generation failure rolls back creation.
 The response remains the saved definition, not an instance list; use the task-instance
 GET endpoint for that list. The generator migration must be applied before running
-this controller. Historical backfills require explicit eligibility review, particularly for newly created
+this controller. The daily scheduler extends the window. For local setup or a manual
+GitHub Actions run, see [Running the task scheduler](#running-the-task-scheduler).
+Historical
+backfills require explicit eligibility review, particularly for newly created
 definitions and reactivated stores. See [generation policy](../docs/task-recurrence.md).
 
 Definition listing/editing is not implemented. Each successful POST creates a new definition;
@@ -510,3 +513,30 @@ src/
   db/pool.ts                PostgreSQL connection pool
   db/transaction.ts         user-scoped transaction helpers
 ```
+
+## Running the task scheduler
+
+After deploying the generator migration, a database administrator runs
+[the scheduler login setup](../supabase/setup/create_scheduler_login.sql) once
+and sets the password separately. Store its Session pooler URL as the environment
+secret `TASK_SCHEDULER_DATABASE_URL` in GitHub's `supabase-shared` environment.
+
+For a local run, export the scheduler connection URL for the intended database
+in your shell. From the repository root run:
+
+```bash
+npm ci
+npm run build:server
+npm run generate:tasks --workspace=server
+```
+
+The workflow runs daily at 10:17 UTC. For a manual run, open **Actions →
+Generate task instances → Run workflow**, select **main**, and run it.
+Check the job summary for inserted and failed counts. Repeating a successful
+run over the same dates preserves existing instances and completions.
+
+Before enabling hosted scheduling, agree on a team member to monitor failed
+runs. For `INVALID_GENERATION_INPUT`, inspect the logged definition ID's
+schedule and target timezones. For network codes such as `ECONNREFUSED` or
+`ETIMEDOUT`, check database availability and connectivity. For `CONFIG`,
+check the environment secret. After correcting the cause, rerun on main.
