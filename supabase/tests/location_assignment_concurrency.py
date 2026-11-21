@@ -148,6 +148,25 @@ try:
       FROM public.roles WHERE key='location_manager';
     """)
 
+    # Concurrent manager generation creates exactly one occurrence.
+    generator_id = str(uuid.uuid4())
+    sql(f"""INSERT INTO public.task_definitions(id,brand_id,location_id,created_by,name,
+        description,category,start_date) VALUES ('{generator_id}','{ids['brand']}',
+        '{ids['location']}','{ids['manager']}','Generator concurrency','','Opening','2026-11-01');""")
+    version = sql(f"SELECT md5((to_jsonb(d)-'created_at'-'updated_at')::text) FROM public.task_definitions d WHERE id='{generator_id}';").stdout.strip()
+    generate = f"SELECT public.generate_task_instances('{generator_id}',ARRAY['2026-11-01'::date],'{version}');"
+    a = open_a('SET LOCAL ROLE operations_hub_runtime;\n' + actor('manager') + generate)
+    b = competing('SET LOCAL ROLE operations_hub_runtime;\n' + actor('manager') + generate,
+                  'generation-duplicate')
+    finish_a(a)
+    out, err = b.communicate(timeout=15)
+    assert b.returncode == 0 and '0' in out.splitlines(), (out, err)
+    assert sql(f"SELECT count(*) FROM public.task_instances WHERE definition_id='{generator_id}';").stdout.strip() == '1'
+    # A scheduler retry against that same occurrence must also leave it untouched.
+    r = sql(f"BEGIN; SET LOCAL ROLE operations_hub_scheduler; SELECT public.scheduler_generate_task_instances('{generator_id}',ARRAY['2026-11-01'::date],'{version}'); COMMIT;")
+    assert r.stdout.strip() == '0', r.stdout
+    print('PASS: concurrent generation and scheduler retry preserve one occurrence', flush=True)
+
     # Definition writers share identity locks and must recheck after waiting.
     create_definition = (
         "SELECT public.create_task_definition("

@@ -1,9 +1,8 @@
 # Task recurrence storage contract
 
-Status: database schema, backend definition-input validation and controlled
-definition creation are implemented. Date expansion, materialization, and scheduler
-integration remain unfinished. Apply the definition-writer migration before using
-the creation endpoint.
+Status: definition creation, bounded recurrence-date expansion, and controlled
+instance insertion are implemented. Definition creation now generates its initial
+instances atomically.
 
 ## Backend recurrence validation
 
@@ -51,8 +50,86 @@ Examples:
 
 Multiple occurrences per date still come from scheduled_times. For example,
 COUNT=3 with two time slots yields up to six instances per eligible location,
-subject to end_date and the generator's eventual DST policy. Agree on that UI
-wording and DST policy before implementing generation.
+subject to end_date and the DST policy below. Confirm that UI wording with the team.
+
+## Shared generation service
+
+`server/src/scheduling/generator.ts` exports:
+
+- `occurrenceDates(definition, window)`: pure expansion of inclusive local dates.
+- `loadManagerGenerationDefinition(client, definitionId)`: authorized input reader.
+- `loadSchedulerGenerationDefinitions(client)`: scheduler-only input reader.
+- `generateTaskInstances(client, definition, window, mode)`: shared database call,
+  returning matching dates and the number of newly inserted instances.
+
+The caller owns the transaction. A manager calls the service inside
+`withUserTransaction` with a verified actor. Do not expose raw date arrays
+or accept definition snapshots/version tokens/timezone filters from browser input: the backend
+loads the authoritative schedule and expands it itself.
+
+The low-level service takes explicit inclusive calendar windows of at most 62 days.
+`generationWindow(now, timezone, catchUpDays)` chooses today through six days ahead
+(seven dates). It uses each store's timezone, never the server's timezone, and
+adds calendar days rather than elapsed local hours. `generateRollingTaskInstances`
+groups eligible stores by timezone and passes that timezone to SQL, which filters
+stores before insertion. A brand spanning midnight boundaries gets separate local
+windows, not the union of dates inserted at every store. Timezone lists come from
+the authorized SQL input readers, not request fields.
+
+Creation defaults to zero catch-up: no past local
+days are generated, but today's slots
+are included even if their times have passed. A definition starting after the
+seven-day horizon is saved with no instances yet. Already-ended definitions also
+produce none. The initial run and definition creation share `withUserTransaction`;
+any generation failure rolls back both. The existing 201 response shape is unchanged.
+
+Routine generation prepares today through six days ahead and does not create
+historical incomplete tasks for newly created definitions or reactivated stores.
+The optional nonzero catch-up argument is an explicit backfill override, not a
+scheduler default. Before using it, establish which definitions/stores were
+eligible on each historical date; the helper does not reconstruct creation or
+activation history. Existing completion/history is never overwritten.
+
+The original start date anchors INTERVAL and COUNT on every call. end_date clips
+the window; a one-off emits only start_date. COUNT counts calendar dates, not slots
+or successful inserts. A date with a skipped DST slot still counts toward COUNT.
+Expansion uses `between`, never unbounded `all`. Supported date-only frequencies
+and the 2000–2199 domain bound traversal; callers must still batch large jobs.
+
+SQL chooses active target stores and times and copies snapshots from the database.
+Brand-wide definitions expand across active stores in that brand. Store-specific
+definitions target only their assigned store. Reruns never overwrite existing
+instances or completion history.
+
+Input readers return an opaque content-version token. Both generation entry
+points require it. If the definition differs from the loaded schedule, SQL raises
+40001; roll back the transaction, reload inputs and recalculate dates before a
+bounded retry. The token excludes timestamp serialization to avoid JS precision
+or session-timezone differences. Changes after the checked snapshot take effect
+on later runs; this is not reconciliation of previously generated instances.
+
+DST policy for this implementation:
+
+- Timed gap: skip a nonexistent wall time, without shifting it into another slot.
+- Timed fold: generate once using PostgreSQL's standard-time interpretation
+  (the later instant in a normal fall-back transition).
+- All-day: use PostgreSQL's local-midnight anchor, matching the existing CHECK.
+  Skip wholly missing local dates rather than assigning them to the next day.
+
+These are explicit implementation choices to confirm with the product owner
+before enabling production scheduling. In particular, this fold choice differs
+from the earlier proposal to use the earlier instant.
+
+The new generator migration is an unmerged draft; its entry points now accept
+`(uuid, date[], text, text DEFAULT NULL)` including the required version and
+optional target-timezone filter. The input readers also return target_timezones. If an earlier draft was
+already applied to a retained local database, do not assume migration up will
+replay it. Use a reviewed forward migration, or rebuild only a disposable database.
+
+Tests: `server/test/generator.test.ts` covers recurrence windows/COUNT/INTERVAL and
+service calls; `supabase/tests/task_instance_generator_verification.sql` covers
+permissions, targets, snapshots, idempotency, DST, stale versions and input guards.
+The disposable concurrency harness also checks duplicate generation across calls.
 
 ## Generator quick reference
 
@@ -62,8 +139,8 @@ wording and DST policy before implementing generation.
 - Copy mode, timezone, instructions and numeric units/bounds into each instance.
 - Reuse the same scheduled instant on retries; never overwrite historical rows.
 - Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
-- Generation and definition writers remain unimplemented; direct runtime table
-  writes are denied. Controlled completion/reopening now exist; see
+- Generation and definition writers are implemented; direct runtime table
+  writes remain denied. Creation uses the shared generator. See
   [task completion](task-completion.md).
 
 ## Ownership and scope
@@ -71,9 +148,9 @@ wording and DST policy before implementing generation.
 GCP's kickoff calls for RRULE recurrence through a library and an idempotent
 `materialize_task_instances(run_date)` operation. Student A provides the schema,
 constraints, permissions, and SQL verification. This task-definition creation
-work also implements backend recurrence validation with rrule 2.8.1. Instance
-generation and scheduler integration are still outstanding; coordinate their
-implementation with the team and reuse the accepted contract documented here.
+work also implements backend recurrence validation with rrule 2.8.1. The shared
+generation service supports on-create generation.
+Coordinate that work with the team and reuse the contract documented here.
 
 ## Database contract
 
@@ -123,7 +200,7 @@ Database acceptance alone does not establish that a schedule is supported by the
 application. Agree on the supported RRULE subset with the team before enabling
 schedule creation.
 
-## Requirements for the future recurrence implementation
+## Recurrence invariants and remaining integration requirements
 
 Use a recurrence library for semantic validation and calendar calculation.
 Validate before persistence and again when processing stored schedules; reject

@@ -176,13 +176,25 @@ with identity writers so waiting calls recheck assignment changes. Its reused
 isolation error mentions assignment writes; this is a server configuration error.
 Runtime has no direct INSERT/UPDATE/DELETE permission on definitions.
 
-This endpoint saves a definition only: it does not generate task instances or
-implement definition listing/editing. Each successful POST creates a new definition;
+This endpoint saves a definition and generates initial instances in the same
+transaction. For each eligible store, the initial window is its local today
+through six days ahead, inclusive. Both creation and the scheduler helper default
+to zero catch-up; routine generation does not backfill past days. Brand-wide
+creation uses separate windows for each store timezone. Start/end dates and
+recurrence still restrict occurrences. A future definition outside this window
+can return 201 with no instances yet. Any generation failure rolls back creation.
+The response remains the saved definition, not an instance list; use the task-instance
+GET endpoint for that list. The generator migration must be applied before running
+this controller. Historical backfills require explicit eligibility review, particularly for newly created
+definitions and reactivated stores. See [generation policy](../docs/task-recurrence.md).
+
+Definition listing/editing is not implemented. Each successful POST creates a new definition;
 there is no idempotency key, so callers should not blindly retry ambiguous failures.
 SQL regression coverage lives in
 `supabase/tests/task_definition_writer_verification.sql`; the disposable database
 harness also checks permission revocation and caller deactivation while waiting.
-Dedicated automated HTTP creation tests remain outstanding. Development HTTP
+Controller/service tests cover initial generation and transaction rollback with a
+stubbed PostgreSQL client; full Supabase-authenticated HTTP creation tests remain outstanding. Development HTTP
 verification uses temporary checks with stubbed auth/database, not a full
 Supabase-authenticated run. Unexpected foreign-key errors return a generic 500,
 not an authorization denial.
