@@ -24,6 +24,27 @@ export type TaskInstance = {
   numericMax: number | null
 }
 
+/** One store in GET /api/task-instances/summary. */
+export type LocationTaskSummary = {
+  locationId: string
+  locationName: string
+  storeNumber: string | null
+  timezone: string
+  brandId: string
+  brandName: string
+  total: number
+  completed: number
+  /** Open instances; not "overdue" (overdue rules are not decided yet) */
+  remaining: number
+}
+
+/** Task counts for every store the user can read, for one calendar day. */
+export type TaskSummary = {
+  date: string
+  totals: { locations: number; locationsWithoutTasks: number; total: number; completed: number; remaining: number }
+  locations: LocationTaskSummary[]
+}
+
 export type CompletionResult = Pick<TaskInstance, 'id' | 'completedAt' | 'completedBy' | 'recordedValue' | 'notes'>
 
 export type CompleteInput = { recordedValue?: number | null; notes?: string | null }
@@ -75,6 +96,10 @@ export const taskInstancesApi = {
     const qs = new URLSearchParams({ locationId, date })
     const { tasks } = await call<{ tasks: TaskInstance[] }>(`/task-instances?${qs}`)
     return tasks
+  },
+  /** Per-store task counts for one calendar day, across every store the user can read. */
+  summary(date: string): Promise<TaskSummary> {
+    return call<TaskSummary>(`/task-instances/summary?${new URLSearchParams({ date })}`)
   },
   complete(id: string, input: CompleteInput = {}) {
     return call<CompletionResult>(`/task-instances/${encodeURIComponent(id)}/complete`, {

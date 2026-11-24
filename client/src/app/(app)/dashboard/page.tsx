@@ -11,6 +11,7 @@ export default function Page() {
       role={session.role}
       brand={session.brand}
       userName={session.mode === 'supabase' ? session.account.fullName : undefined}
+      live={session.mode === 'supabase'}
     />
   )
 }
