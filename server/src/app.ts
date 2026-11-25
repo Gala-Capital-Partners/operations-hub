@@ -1,3 +1,4 @@
+import { createPeopleRouter } from './routes/people.routes.js'
 import cors from 'cors'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import { tasksRouter } from './routes/tasks.routes.js'
@@ -19,6 +20,7 @@ export function createApp(deps: { pool?: Pool; requireAuth?: RequestHandler } = 
   app.use(express.json({ limit: '1mb' }))
 
   if (deps.pool && deps.requireAuth) {
+    app.use('/api', createPeopleRouter({ pool: deps.pool, requireAuth: deps.requireAuth }))
     app.use('/api/me', createMeRouter({ pool: deps.pool, requireAuth: deps.requireAuth }))
     app.use('/api/task-definitions', createTaskDefinitionRouter({ pool: deps.pool, requireAuth: deps.requireAuth }))
     app.use('/api/task-instances', createTaskInstancesRouter({pool: deps.pool, requireAuth: deps.requireAuth}))

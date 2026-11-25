@@ -608,3 +608,21 @@ runs. For `INVALID_GENERATION_INPUT`, inspect the logged definition ID's
 schedule and target timezones. For network codes such as `ECONNREFUSED` or
 `ETIMEDOUT`, check database availability and connectivity. For `CONFIG`,
 check the environment secret. After correcting the cause, rerun on main.
+
+## Store employee invitations
+
+These endpoints require a Supabase bearer token. Organization admins, brand admins and location managers can invite employees within their respective scopes. Invitations grant only the employee role at one store.
+
+| Method and path | Body | Success |
+| --- | --- | --- |
+| POST /api/locations/:locationId/invitations | `{"email":"person@example.com"}` | 201 with invitation ID and expiry |
+| GET /api/locations/:locationId/invitations | — | 200 with `{invitations: [{id, email, expiresAt}]}` |
+| DELETE /api/locations/:locationId/invitations/:id | — | 204, cancels a pending invite |
+| POST /api/invitations/accept | `{"token":"…","fullName":"…"}` | 200 with locationId |
+| DELETE /api/locations/:locationId/members/:userId | — | 204, revokes the assignment at this store |
+
+Set `INVITATION_ACCEPT_URL` to the frontend acceptance page and allow that URL with its invitation query parameter in Supabase Auth's redirect allowlist. Use HTTPS on the hosted project. Delivery uses Supabase email magic links with the publishable key. Enable email signup for new recipients and configure hosted SMTP. For local verification use the local email inbox. The email template must use Supabase's confirmation link and preserve its redirect.
+
+The acceptance page must establish the Supabase session from the email link, read the `invitation` query parameter, and POST it as `token` with the recipient's name **before** fetching /api/me. Clear the link parameters after consumption. New users who will use the app's password login also need to set a password using their authenticated Supabase session.
+
+An invitation expires after seven days. Retrying delivery before expiry reuses the pending invitation. A delivery error returns 503 with its ID for retry or cancellation. Local Supabase email links expire after one hour. If the email link expires first, resend the invitation. An Auth account without an active application profile receives 403 from /api/me. Acceptance checks the verified email and the inviter's current authority, then creates the profile and assignment atomically. Replaying an accepted link never restores revoked access. Removal applies to any location assignment the caller is authorized to revoke. It preserves other assignments, including any independent broader permissions.

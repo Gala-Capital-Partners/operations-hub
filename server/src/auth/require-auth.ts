@@ -46,6 +46,7 @@ export function createRequireAuth(
 
     // This ID comes from verified authentication, not request input.
     res.locals.actorId = data.user.id
+    res.locals.verifiedEmail = data.user.email_confirmed_at ? data.user.email : undefined
 
     next()
   }

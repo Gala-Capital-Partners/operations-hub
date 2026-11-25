@@ -30,6 +30,8 @@ export function createAuthClient() {
 
   return createClient(url, key, {
     auth: {
+      // Invitation links are sent here and opened in a separate browser without a PKCE verifier.
+      flowType: 'implicit',
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false,
