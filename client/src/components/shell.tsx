@@ -1,9 +1,10 @@
 'use client'
 
 import Link from 'next/link'
+import { initialsOf } from '@/lib/auth'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Ic } from '@/components/icons'
-import { BRANDS, ROLES, getNavItems } from '@/lib/config'
+import { BRANDS, DEFAULT_BRAND_ACCENT, ROLES, getNavItems } from '@/lib/config'
 import { type Brand, type Role, type Screen } from '@/lib/types'
 import type { Account } from '@/components/session-provider'
 
@@ -12,9 +13,9 @@ export function Shell({
 }: {
   children: ReactNode
   role: Role
-  brand: Brand
+  brand: string
   screen: Screen
-  onBrandSwitch: (b: Brand) => void
+  onBrandSwitch: (b: string) => void
   onRoleSwitch: (r: Role) => void
   onLogout: () => void
   /** Real signed-in user. Absent in the demo, which shows a role switcher and placeholder names. */
@@ -30,19 +31,29 @@ export function Shell({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [menuOpen])
-  const b = BRANDS[brand]
+  const brandOptions = account
+    ? account.brands.map(({ slug, name }) => {
+        const theme = Object.hasOwn(BRANDS, slug) ? BRANDS[slug as Brand] : undefined
+        return { slug, name, short: theme?.short ?? initialsOf(name), accent: theme?.accent ?? DEFAULT_BRAND_ACCENT }
+      })
+    : Object.entries(BRANDS).map(([slug, theme]) => ({ slug, ...theme }))
+  const b = brandOptions.find(option => option.slug === brand)
+  if (!b) {
+    return (
+      <main className="p-6">
+        <p>Your selected brand is unavailable.</p>
+        <button onClick={onLogout} className="mt-3 underline">Sign out</button>
+      </main>
+    )
+  }
   // Real accounts show their own name and can't switch roles; the demo uses placeholder people.
   const r = account
     ? { ...ROLES[role], name: account.fullName, initials: account.initials }
     : ROLES[role]
   const isDemo = !account
   const brandBrandId = account?.brands.find(x => x.slug === brand)?.id
-  const locationCount = account ? account.locations.filter(l => l.brandId === brandBrandId).length : b.locations
-  // Brands the user may switch between: real accounts only see brands they have access to.
-  const switchableBrands = (['burgercraft', 'tacoverde'] as Brand[]).filter(
-    br => !account || account.brands.some(x => x.slug === br),
-  )
-  const canSwitchBrand = role === 'corporate' && switchableBrands.length > 1
+  const locationCount = account ? account.locations.filter(l => l.brandId === brandBrandId).length : BRANDS[brand as Brand].locations
+  const canSwitchBrand = (account || role === 'corporate') && brandOptions.length > 1
 
   const NavIcon = (id: string) => ({
     dashboard: <Ic.Dashboard />,
@@ -70,16 +81,17 @@ export function Shell({
               <p className="text-[10px] text-stone-400">OpsHub · {locationCount} {locationCount === 1 ? 'location' : 'locations'}</p>
             </div>
           </div>
-          {/* Brand switcher — Corporate Admin only */}
+          {/* Brand switcher */}
           {canSwitchBrand && (
             <div className="bg-stone-100 rounded-lg p-1 flex gap-1">
-              {switchableBrands.map(br => (
+              {brandOptions.map(br => (
                 <button
-                  key={br}
-                  onClick={() => onBrandSwitch(br)}
-                  className={`flex-1 py-1 rounded text-[11px] font-bold transition-all ${brand === br ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-400 hover:text-stone-600'}`}
+                  key={br.slug}
+                  title={br.name}
+                  onClick={() => onBrandSwitch(br.slug)}
+                  className={`flex-1 py-1 rounded text-[11px] font-bold transition-all ${brand === br.slug ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-400 hover:text-stone-600'}`}
                 >
-                  {BRANDS[br].short}
+                  {br.short}
                 </button>
               ))}
             </div>
@@ -164,13 +176,14 @@ export function Shell({
           <div className="flex items-center gap-2">
             {canSwitchBrand && (
               <div className="bg-stone-100 rounded-md p-0.5 flex">
-                {switchableBrands.map(br => (
+                {brandOptions.map(br => (
                   <button
-                    key={br}
-                    onClick={() => onBrandSwitch(br)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${brand === br ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-400'}`}
+                    key={br.slug}
+                    title={br.name}
+                    onClick={() => onBrandSwitch(br.slug)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${brand === br.slug ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-400'}`}
                   >
-                    {BRANDS[br].short}
+                    {br.short}
                   </button>
                 ))}
               </div>

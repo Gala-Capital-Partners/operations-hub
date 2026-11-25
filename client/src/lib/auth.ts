@@ -1,6 +1,5 @@
 import type { MeResponse } from '@/lib/api/me'
-import { BRANDS } from '@/lib/config'
-import type { Brand, Role } from '@/lib/types'
+import type { Role } from '@/lib/types'
 
 // Database role keys -> the app's UI roles, highest authority first.
 const ROLE_PRIORITY: [MeResponse['permissions'][number]['role'], Role][] = [
@@ -16,21 +15,12 @@ export function roleFromAccess(me: MeResponse): Role | null {
   return ROLE_PRIORITY.find(([dbRole]) => held.has(dbRole))?.[1] ?? null
 }
 
-function isBrand(slug: string): slug is Brand {
-  return slug in BRANDS
-}
-
-/** Brands the user can see that the UI knows how to theme. */
-export function accessibleBrands(me: MeResponse): Brand[] {
-  return me.brands.map(b => b.slug).filter(isBrand)
-}
-
 /**
  * Brand to show after sign-in: the preferred one if the user can access it,
  * otherwise the first brand they can see.
  */
-export function brandFromAccess(me: MeResponse, preferred?: Brand): Brand | null {
-  const brands = accessibleBrands(me)
+export function brandFromAccess(me: MeResponse, preferred?: string): string | null {
+  const brands = me.brands.map(b => b.slug)
   if (preferred && brands.includes(preferred)) return preferred
   return brands[0] ?? null
 }
@@ -58,4 +48,18 @@ export function canAtLocation(
         (p.scope === 'brand' && p.brandId === location.brandId) ||
         (p.scope === 'location' && p.locationId === locationId)),
   )
+}
+
+/**
+ * The account's stores in one brand, in the order the Tasks screen lists them
+ * (store number, then name). The first one is the user's default store.
+ */
+export function brandLocations<L extends { brandId: string; name: string; storeNumber: string | null }>(
+  account: { brands: { id: string; slug: string }[]; locations: L[] },
+  brandSlug: string,
+): L[] {
+  const brandId = account.brands.find(b => b.slug === brandSlug)?.id
+  return account.locations
+    .filter(l => l.brandId === brandId)
+    .sort((a, b) => (a.storeNumber ?? a.name).localeCompare(b.storeNumber ?? b.name))
 }

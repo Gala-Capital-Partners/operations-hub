@@ -67,12 +67,50 @@ test.describe('Real sign-in (Supabase)', () => {
     await expect(account(page).getByText('OpsHub · 3 locations')).toBeVisible()
   })
 
-  test("a Taco Verde manager lands in Taco Verde even if BurgerCraft was chosen on the login screen", async ({ page }) => {
+  test("a Taco Verde manager lands in their assigned brand", async ({ page }) => {
     await signInWithPassword(page, 'taylor.kim@opshub.test')
     await expect(account(page).getByText('Taco Verde', { exact: true })).toBeVisible()
     await expect(account(page).getByText('Taylor Kim', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Taylor$/ })).toBeVisible()
     await expect(account(page).getByText('OpsHub · 1 location')).toBeVisible()
+  })
+
+  test('a newly onboarded brand has its own dashboard and store checklists', async ({ page }) => {
+    await signInWithPassword(page, 'onboarding.manager@opshub.test')
+    await expect(account(page).getByText('Harbor Kitchen', { exact: true })).toBeVisible()
+    const rollup = page.getByRole('region', { name: 'Task Completion by Location' })
+    await expect(rollup.getByText('Harbor Central', { exact: true })).toBeVisible()
+    await expect(rollup.getByText('Harbor West', { exact: true })).toBeVisible()
+
+    await sidebar(page).getByRole('link', { name: 'Tasks' }).click()
+    const location = page.getByRole('combobox', { name: 'Location' })
+    await location.selectOption({ label: 'Harbor Central' })
+    await expect(page.getByText('Check opening supplies', { exact: true })).toBeVisible()
+    await location.selectOption({ label: 'Harbor West' })
+    await expect(page.getByText('No tasks scheduled for this day.')).toBeVisible()
+  })
+
+  test('a reload reconciles the saved brand with current access', async ({ page }) => {
+    await signInWithPassword(page, 'onboarding.manager@opshub.test')
+    await expect(page).toHaveURL(/\/dashboard$/)
+    await page.evaluate(() => {
+      const session = JSON.parse(localStorage.getItem('opshub.session')!)
+      session.brand = 'former-slug'
+      session.account.brands[0].slug = 'former-slug'
+      session.account.brands[0].name = 'Former Name'
+      localStorage.setItem('opshub.session', JSON.stringify(session))
+    })
+    await page.reload()
+    await expect(account(page).getByText('Harbor Kitchen', { exact: true })).toBeVisible()
+    await expect(account(page).getByRole('button', { name: 'Sign out' })).toBeVisible()
+
+    await page.route('**/api/me', async route => {
+      const response = await route.fetch()
+      await route.fulfill({ response, json: { ...await response.json(), brands: [] } })
+    })
+    await page.reload()
+    await expect(page.getByLabel('Email address')).toBeVisible()
+    expect(await page.evaluate(() => localStorage.getItem('opshub.session'))).toBeNull()
   })
 
   test('the session survives a reload, and sign out ends it', async ({ page }) => {
