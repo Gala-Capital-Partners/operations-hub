@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { fetchMe, type MeResponse } from '@/lib/api/me'
 import { brandFromAccess, initialsOf, roleFromAccess } from '@/lib/auth'
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
+import { BRANDS } from '@/lib/config'
 import type { Brand, Role } from '@/lib/types'
 
 /**
@@ -28,7 +29,7 @@ export type Account = {
 
 export type Session =
   | { mode: 'demo'; role: Role; brand: Brand }
-  | { mode: 'supabase'; role: Role; brand: Brand; account: Account }
+  | { mode: 'supabase'; role: Role; brand: string; account: Account }
 
 type SessionContextValue = {
   session: Session | null
@@ -41,7 +42,7 @@ type SessionContextValue = {
   loginWithPassword: (email: string, password: string, preferredBrand?: Brand) => Promise<void>
   logout: () => void
   setRole: (role: Role) => void
-  setBrand: (brand: Brand) => void
+  setBrand: (brand: string) => void
 }
 
 const STORAGE_KEY = 'opshub.session'
@@ -65,6 +66,28 @@ function writeStored(s: Session | null) {
     else localStorage.removeItem(STORAGE_KEY)
   } catch {
     /* storage unavailable — session just won't survive a refresh */
+  }
+}
+
+function sessionFromAccess(me: MeResponse, preferredBrand?: string): Session {
+  const role = roleFromAccess(me)
+  const brand = brandFromAccess(me, preferredBrand)
+  if (!role || !brand) {
+    throw new Error('Your account has no role assignment yet. Ask your administrator for access.')
+  }
+  return {
+    mode: 'supabase',
+    role,
+    brand,
+    account: {
+      userId: me.user.id,
+      email: me.user.email,
+      fullName: me.user.fullName,
+      initials: initialsOf(me.user.fullName),
+      brands: me.brands,
+      locations: me.locations,
+      permissions: me.permissions.map(({ permission, scope, brandId, locationId }) => ({ permission, scope, brandId, locationId })),
+    },
   }
 }
 
@@ -95,15 +118,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     // Real session: only keep it if Supabase still has a signed-in user.
     let cancelled = false
-    supabase.auth.getSession().then(({ data }) => {
-      if (cancelled) return
-      const valid = data.session?.user.id === usable.account.userId
-      if (!valid) writeStored(null)
-      setSession(valid ? usable : null)
-      setReady(true)
-    })
+    const restore = async () => {
+      let next: Session | null = null
+      try {
+        const { data } = await supabase.auth.getSession()
+        if (data.session && usable?.mode === 'supabase' && data.session.user.id === usable.account.userId) {
+          const me = await fetchMe(data.session.access_token)
+          next = sessionFromAccess(me, usable.brand)
+        }
+      } catch {
+        // Return to sign-in if the saved account's access cannot be confirmed.
+      }
+      if (!cancelled) {
+        update(next)
+        setReady(true)
+      }
+    }
+    void restore()
     return () => { cancelled = true }
-  }, [])
+  }, [update])
 
   // Signed out elsewhere (another tab, expired refresh token): drop the app session too.
   useEffect(() => {
@@ -131,25 +164,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       try {
         const me = await fetchMe(data.session.access_token)
-        const role = roleFromAccess(me)
-        const brand = brandFromAccess(me, preferredBrand)
-        if (!role || !brand) {
-          throw new Error('Your account has no role assignment yet. Ask your administrator for access.')
-        }
-        update({
-          mode: 'supabase',
-          role,
-          brand,
-          account: {
-            userId: me.user.id,
-            email: me.user.email,
-            fullName: me.user.fullName,
-            initials: initialsOf(me.user.fullName),
-            brands: me.brands,
-            locations: me.locations,
-            permissions: me.permissions.map(({ permission, scope, brandId, locationId }) => ({ permission, scope, brandId, locationId })),
-          },
-        })
+        update(sessionFromAccess(me, preferredBrand))
       } catch (err) {
         // Don't leave a Supabase login behind without an app session.
         await supabase.auth.signOut().catch(() => undefined)
@@ -173,9 +188,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Real users' roles come from the database; only the demo can switch roles.
       setRole: role => session?.mode === 'demo' && update({ ...session, role }),
       setBrand: brand => {
-        if (!session) return
-        if (session.mode === 'supabase' && !session.account.brands.some(b => b.slug === brand)) return
-        update({ ...session, brand })
+        if (session?.mode === 'supabase' && session.account.brands.some(b => b.slug === brand)) {
+          update({ ...session, brand })
+        } else if (session?.mode === 'demo' && Object.hasOwn(BRANDS, brand)) {
+          update({ ...session, brand: brand as Brand })
+        }
       },
     }),
     [session, ready, update, loginWithPassword],

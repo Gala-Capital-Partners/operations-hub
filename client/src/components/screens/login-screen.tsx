@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { BRANDS, ROLES } from '@/lib/config'
+import { BRANDS, DEFAULT_BRAND_ACCENT, ROLES } from '@/lib/config'
 import { type Brand, type Role } from '@/lib/types'
 
 export function LoginScreen({
@@ -14,7 +14,7 @@ export function LoginScreen({
   /** True when Supabase is configured: show email + password sign-in instead of the role picker. */
   realAuth?: boolean
   /** Real sign-in; rejects with an Error whose message is shown to the user. */
-  onPasswordLogin?: (email: string, password: string, brand: Brand) => Promise<void>
+  onPasswordLogin?: (email: string, password: string, brand?: Brand) => Promise<void>
 }) {
   const [brand, setBrand] = useState<Brand>('burgercraft')
   const [role, setRole] = useState<Role>('manager')
@@ -23,6 +23,7 @@ export function LoginScreen({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const b = BRANDS[brand]
+  const accent = realAuth ? DEFAULT_BRAND_ACCENT : b.accent
 
   const submitPassword = async (e: FormEvent) => {
     e.preventDefault()
@@ -34,7 +35,7 @@ export function LoginScreen({
     setSubmitting(true)
     setError(null)
     try {
-      await onPasswordLogin(email, password, brand)
+      await onPasswordLogin(email, password)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.')
       setSubmitting(false)
@@ -46,7 +47,7 @@ export function LoginScreen({
       {/* Brand panel */}
       <div
         className="flex flex-col items-center justify-center py-14 px-10 md:w-[46%] md:min-h-screen relative overflow-hidden"
-        style={{ backgroundColor: b.accent }}
+        style={{ backgroundColor: accent }}
       >
         <div
           className="absolute inset-0 opacity-[0.08]"
@@ -54,14 +55,14 @@ export function LoginScreen({
         />
         <div className="relative z-10 text-center">
           <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center mx-auto mb-5 text-4xl">
-            {brand === 'burgercraft' ? '🍔' : '🌮'}
+            {realAuth ? 'OH' : brand === 'burgercraft' ? '🍔' : '🌮'}
           </div>
           <p className="text-white/60 text-xs font-semibold uppercase tracking-widest mb-2">OpsHub</p>
-          <h1 className="text-white text-3xl font-bold tracking-tight">{b.name}</h1>
-          <p className="text-white/60 text-sm mt-1.5">{b.locations} locations · Operations Platform</p>
+          <h1 className="text-white text-3xl font-bold tracking-tight">{realAuth ? 'Operations Hub' : b.name}</h1>
+          {!realAuth && <p className="text-white/60 text-sm mt-1.5">{b.locations} locations · Operations Platform</p>}
         </div>
         {/* Brand toggle */}
-        <div className="relative z-10 mt-8 bg-white/20 rounded-full flex p-1">
+        {!realAuth && <div className="relative z-10 mt-8 bg-white/20 rounded-full flex p-1">
           {(['burgercraft', 'tacoverde'] as Brand[]).map(br => (
             <button
               key={br}
@@ -71,8 +72,8 @@ export function LoginScreen({
               {BRANDS[br].short}
             </button>
           ))}
-        </div>
-        <p className="relative z-10 text-white/40 text-xs mt-6">One login. Both brands.</p>
+        </div>}
+        {!realAuth && <p className="relative z-10 text-white/40 text-xs mt-6">One login. Both brands.</p>}
       </div>
 
       {/* Form panel */}
@@ -81,7 +82,7 @@ export function LoginScreen({
           <div className="mb-8">
             <p className="text-xs font-semibold text-stone-400 uppercase tracking-widest mb-3">Sign in</p>
             <h2 className="text-2xl font-semibold text-stone-900">Welcome back</h2>
-            <p className="text-stone-500 text-sm mt-1">Signing into <strong>{b.name}</strong> OpsHub.</p>
+            {!realAuth && <p className="text-stone-500 text-sm mt-1">Signing into <strong>{b.name}</strong> OpsHub.</p>}
           </div>
 
           {realAuth ? (
@@ -118,7 +119,7 @@ export function LoginScreen({
                 type="submit"
                 disabled={submitting}
                 className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60 disabled:cursor-wait"
-                style={{ backgroundColor: b.accent }}
+                style={{ backgroundColor: accent }}
               >
                 {submitting ? 'Signing in…' : 'Sign in to OpsHub'}
               </button>
@@ -162,7 +163,7 @@ export function LoginScreen({
             <button
               onClick={() => onLogin(role, brand)}
               className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
-              style={{ backgroundColor: b.accent }}
+              style={{ backgroundColor: accent }}
             >
               Sign in to OpsHub
             </button>

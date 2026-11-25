@@ -1,5 +1,7 @@
 import { type Brand, type NavItem, type Role } from '@/lib/types'
 
+export const DEFAULT_BRAND_ACCENT = '#0f766e'
+
 export const BRANDS: Record<Brand, { name: string; short: string; accent: string; bg: string; locations: number }> = {
   burgercraft: { name: 'BurgerCraft', short: 'BC', accent: '#EA5A0C', bg: '#FFF7ED', locations: 52 },
   tacoverde: { name: 'Taco Verde', short: 'TV', accent: '#15803D', bg: '#F0FDF4', locations: 38 },

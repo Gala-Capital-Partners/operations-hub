@@ -233,4 +233,59 @@ SELECT id, completed_by, 'completed', completed_at, recorded_value, notes
 FROM public.task_instances
 WHERE completed_at IS NOT NULL;
 
+-- ---------------------------------------------------------------------------
+-- Brand onboarding fixture: a brand that is not in the client's theme config
+-- (used by e2e/tests/supabase-auth.spec.ts)
+-- ---------------------------------------------------------------------------
+
+-- Synthetic, local-only brand-onboarding fixture, separate from the original demo organization.
+-- Its first task comes from the real generator. Seeds run as postgres, which may only
+-- call the scheduler entry points while temporarily acting as the scheduler role.
+GRANT operations_hub_scheduler TO postgres WITH INHERIT FALSE, SET TRUE;
+
+DO $$
+DECLARE
+    org uuid;
+    brand uuid;
+    manager uuid := gen_random_uuid();
+    store uuid;
+    empty_store uuid;
+    definition uuid;
+    email_address text := 'onboarding.manager@opshub.test';
+    today date := (now() AT TIME ZONE 'America/Los_Angeles')::date;
+BEGIN
+    INSERT INTO public.organizations (name) VALUES ('Onboarding Demo Group') RETURNING id INTO org;
+    INSERT INTO public.brands (organization_id, name, slug)
+        VALUES (org, 'Harbor Kitchen', 'harbor-kitchen') RETURNING id INTO brand;
+    INSERT INTO public.locations (brand_id, name, timezone)
+        VALUES (brand, 'Harbor Central', 'America/Los_Angeles') RETURNING id INTO store;
+    INSERT INTO public.locations (brand_id, name, timezone)
+        VALUES (brand, 'Harbor West', 'America/Los_Angeles') RETURNING id INTO empty_store;
+
+    INSERT INTO auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+        confirmation_token, recovery_token, email_change_token_new, email_change)
+    VALUES ('00000000-0000-0000-0000-000000000000', manager, 'authenticated', 'authenticated',
+        email_address, extensions.crypt('opshub-local-dev', extensions.gen_salt('bf')), now(),
+        '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', '');
+    INSERT INTO auth.identities (provider_id, user_id, identity_data, provider, created_at, updated_at)
+        VALUES (manager::text, manager, jsonb_build_object('sub', manager, 'email', email_address), 'email', now(), now());
+    INSERT INTO public.users (id, organization_id, email, full_name)
+        VALUES (manager, org, email_address, 'Harbor Manager');
+    INSERT INTO public.user_locations (user_id, organization_id, brand_id, location_id, role_id)
+        SELECT manager, org, brand, loc.id, r.id FROM (VALUES (store), (empty_store)) AS loc(id)
+        CROSS JOIN public.roles r WHERE r.key = 'location_manager';
+
+    INSERT INTO public.task_definitions (brand_id, location_id, created_by, name, description, category, start_date)
+        VALUES (brand, store, manager, 'Check opening supplies', 'Count supplies before opening.', 'Opening', today)
+        RETURNING id INTO definition;
+    SET LOCAL ROLE operations_hub_scheduler;
+    PERFORM public.scheduler_generate_task_instances(definition, ARRAY[today], d.definition_version)
+    FROM public.scheduler_active_task_definitions() AS d WHERE d.id = definition;
+    RESET ROLE;
+END;
+$$;
+
+REVOKE operations_hub_scheduler FROM postgres;
+
 COMMIT;

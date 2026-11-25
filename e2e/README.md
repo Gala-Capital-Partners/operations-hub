@@ -87,3 +87,10 @@ configured, stop it first so Playwright starts a client in the right mode.
   so the tests check that they render and are access-controlled, not their numbers.
 - Failed runs keep a screenshot, video and trace in `test-results/`
   (`npx playwright show-trace <path-to-trace.zip>` replays the run step by step).
+
+The real sign-in suite also covers Harbor Kitchen, a synthetic brand in a separate
+organization. The local onboarding seed assigns its manager two stores and gives
+Harbor Central one task for the Los Angeles date when the seed runs. Harbor West
+has an empty checklist. Run this scenario against a disposable local database
+seeded on the day of the test. Use the existing local test password with
+`onboarding.manager@opshub.test` to walk through it manually.
