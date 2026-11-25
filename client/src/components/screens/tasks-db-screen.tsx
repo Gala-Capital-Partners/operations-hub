@@ -134,6 +134,8 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: str
     )
   }
 
+  const brandDates = creating ? locations.map(l => localToday(l.timezone)).sort() : []
+
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
       {creating && brandInfo && today && (
@@ -142,6 +144,8 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: str
           location={location}
           canCreateBrandWide={canCreateBrandWide}
           today={today}
+          earliestBrandDate={brandDates[0] ?? today}
+          latestBrandDate={brandDates.at(-1) ?? today}
           onClose={() => setCreating(false)}
           onCreated={name => {
             setCreating(false)

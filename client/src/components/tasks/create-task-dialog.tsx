@@ -49,6 +49,8 @@ export function CreateTaskDialog({
   location,
   canCreateBrandWide,
   today,
+  earliestBrandDate,
+  latestBrandDate,
   onCreated,
   onClose,
 }: {
@@ -56,8 +58,11 @@ export function CreateTaskDialog({
   location: { id: string; name: string }
   /** The user may create tasks for every store in the brand (brand/organization admins) */
   canCreateBrandWide: boolean
-  /** The store's local today, YYYY-MM-DD */
+  /** The selected store's local today, YYYY-MM-DD */
   today: string
+  /** The earliest local today among the brand's stores (they can be in different time zones) */
+  earliestBrandDate: string
+  latestBrandDate: string
   onCreated: (name: string) => void
   onClose: () => void
 }) {
@@ -79,8 +84,20 @@ export function CreateTaskDialog({
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  const refToday = target === 'brand' ? earliestBrandDate : today
   const orderedDays = WEEKDAYS.map(([code]) => code).filter(code => days.includes(code))
-  const effectiveStart = repeat === 'weekly' && orderedDays.length > 0 ? firstWeeklyDate(startDate, orderedDays) : startDate
+  const validStart = /^\d{4}-\d{2}-\d{2}$/.test(startDate) && !Number.isNaN(Date.parse(`${startDate}T00:00:00Z`))
+  const effectiveStart =
+    validStart && repeat === 'weekly' && orderedDays.length > 0 ? firstWeeklyDate(startDate, orderedDays) : startDate
+
+  // Find the first occurrence still eligible at any target store.
+  const from = effectiveStart > refToday ? effectiveStart : refToday
+  const nextOccurrence = repeat === 'none' ? effectiveStart
+    : repeat === 'daily' ? from
+    : validStart && orderedDays.length > 0 ? firstWeeklyDate(from, orderedDays) : ''
+  const partialCoverage = target === 'brand' && validStart &&
+    nextOccurrence >= earliestBrandDate && nextOccurrence < latestBrandDate &&
+    (repeat === 'none' || !endDate || nextOccurrence <= endDate)
 
   function toggleDay(code: Weekday) {
     setDays(current => (current.includes(code) ? current.filter(d => d !== code) : [...current, code]))
@@ -90,9 +107,22 @@ export function CreateTaskDialog({
     if (!name.trim()) return 'Give the task a name.'
     if ([...name.trim()].length > 200) return 'The name can be at most 200 characters.'
     if ([...description].length > 2000) return 'The instructions can be at most 2,000 characters.'
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return 'Choose a start date.'
+    if (!validStart) return 'Choose a start date.'
+    // Tasks are generated from each store's today forward, so a past one-time task would never appear.
+    // A brand-wide date is eligible while at least one store can still generate it.
+    if (repeat === 'none' && startDate < refToday) {
+      return target === 'brand'
+        ? `That date has passed at every store. Choose ${prettyDate(refToday)} or later.`
+        : 'A one-time task must be today or later.'
+    }
     if (repeat === 'weekly' && orderedDays.length === 0) return 'Choose at least one day of the week.'
     if (repeat !== 'none' && endDate && endDate < effectiveStart) return 'The end date is before the first day.'
+    if (repeat !== 'none' && endDate) {
+      // Each store generates from its own local today through the inclusive end date.
+      if (endDate < nextOccurrence) {
+        return `No task would be created: the next occurrence is ${prettyDate(nextOccurrence)}, after the end date.`
+      }
+    }
 
     const cleanTimes = [...new Set(times.filter(Boolean))].sort()
     if (timing === 'timed' && cleanTimes.length === 0) return 'Add at least one time.'
@@ -100,6 +130,7 @@ export function CreateTaskDialog({
     let numericMin: number | null = null
     let numericMax: number | null = null
     if (recordsValue) {
+      if (!unit.trim()) return 'Enter a unit for the reading (for example °F), or untick "Record a reading".'
       if (min.trim() !== '') numericMin = Number(min)
       if (max.trim() !== '') numericMax = Number(max)
       if ((numericMin !== null && !Number.isFinite(numericMin)) || (numericMax !== null && !Number.isFinite(numericMax))) {
@@ -219,7 +250,7 @@ export function CreateTaskDialog({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label htmlFor="task-start" className={labelClass}>{repeat === 'none' ? 'Date' : 'Starts'}</label>
-            <input id="task-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={inputClass} />
+            <input id="task-start" type="date" value={startDate} min={repeat === 'none' ? refToday : undefined} onChange={e => setStartDate(e.target.value)} className={inputClass} />
             {repeat === 'weekly' && effectiveStart !== startDate && (
               <p className="text-[11px] text-stone-500 mt-1">First day: {prettyDate(effectiveStart)}</p>
             )}
@@ -227,10 +258,16 @@ export function CreateTaskDialog({
           {repeat !== 'none' && (
             <div>
               <label htmlFor="task-end" className={labelClass}>Ends <span className="normal-case font-normal">(optional)</span></label>
-              <input id="task-end" type="date" value={endDate} min={effectiveStart} onChange={e => setEndDate(e.target.value)} className={inputClass} />
+              <input id="task-end" type="date" value={endDate} min={effectiveStart > refToday ? effectiveStart : refToday} onChange={e => setEndDate(e.target.value)} className={inputClass} />
             </div>
           )}
         </div>
+
+        {partialCoverage && (
+          <p role="status" className="text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+            Some stores are already past {prettyDate(nextOccurrence)} and will skip that day’s task.
+          </p>
+        )}
 
         <fieldset>
           <legend className={labelClass}>When</legend>
