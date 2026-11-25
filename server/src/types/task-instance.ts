@@ -7,6 +7,7 @@ export type TaskInstanceStateRow = {
 };
 
 export type TaskInstanceListRow = TaskInstanceStateRow & {
+  definition_id: string;
   name_snapshot: string;
   description_snapshot: string;
   category_snapshot: 'Opening' | 'Midday' | 'Closing';

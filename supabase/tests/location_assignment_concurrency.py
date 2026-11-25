@@ -167,6 +167,31 @@ try:
     assert r.stdout.strip() == '0', r.stdout
     print('PASS: concurrent generation and scheduler retry preserve one occurrence', flush=True)
 
+    # Hold the winning transaction open until its competitor waits on the advisory lock.
+    for first in ('scheduler', 'deactivation'):
+        definition_id = str(uuid.uuid4())
+        tomorrow = "(now() AT TIME ZONE 'UTC')::date + 1"
+        sql(f"""INSERT INTO public.task_definitions(id,brand_id,location_id,created_by,name,
+            description,category,start_date) VALUES ('{definition_id}','{ids['brand']}',
+            '{ids['location']}','{ids['manager']}','Scheduler race','','Opening',{tomorrow});""")
+        token = sql(f"SELECT definition_version FROM public.scheduler_active_task_definitions() "
+                    f"WHERE id='{definition_id}';").stdout.strip()
+        scheduler = ("SET LOCAL ROLE operations_hub_scheduler; "
+                     f"SELECT public.scheduler_generate_task_instances('{definition_id}', ARRAY[{tomorrow}], '{token}');")
+        deactivate = ('SET LOCAL ROLE operations_hub_runtime; ' + actor('manager') +
+                      f"SELECT cancelled_instance_count FROM public.deactivate_task_definition('{definition_id}');")
+        scheduler_first = first == 'scheduler'
+        a = open_a(scheduler if scheduler_first else deactivate)
+        b = competing(deactivate if scheduler_first else scheduler, 'race-first-' + first)
+        finish_a(a)
+        out, err = b.communicate(timeout=15)
+        expected_rows = '1' if scheduler_first else '0'
+        assert b.returncode == 0 and out.strip().splitlines()[-1] == expected_rows, (out, err)
+        counts = sql(f"SELECT count(*), count(*) FILTER (WHERE cancelled_at IS NULL) "
+                     f"FROM public.task_instances WHERE definition_id='{definition_id}';")
+        assert counts.stdout.strip() == expected_rows + '|0', counts.stdout
+        print('PASS: ' + first + ' commits first; no future open occurrence survives', flush=True)
+
     # Definition writers share identity locks and must recheck after waiting.
     create_definition = (
         "SELECT public.create_task_definition("

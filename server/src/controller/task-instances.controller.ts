@@ -23,6 +23,7 @@ const reopenQuery = `
 const readQuery = `
   SELECT
     t.id,
+    t.definition_id,
     t.name_snapshot,
     t.description_snapshot,
     t.category_snapshot,
@@ -41,6 +42,9 @@ const readQuery = `
   FROM public.task_instances AS t
   WHERE t.location_id = $1
     AND t.scheduled_day = $2
+    -- Future occurrences cancelled by definition deactivation are kept for
+    -- audit but are not part of any checklist.
+    AND t.cancelled_at IS NULL
   ORDER BY t.scheduled_at, t.id
 `;
 
@@ -71,6 +75,7 @@ const summaryQuery = `
   LEFT JOIN public.task_instances AS t
     ON t.location_id = l.id
     AND t.scheduled_day = $1
+    AND t.cancelled_at IS NULL
   GROUP BY l.id, l.name, l.store_number, l.timezone, b.id, b.name
   ORDER BY b.name, l.name, l.id
 `;
@@ -113,6 +118,7 @@ function toCompletionResponse(row: TaskInstanceStateRow) {
 function toTaskListResponse(rows: TaskInstanceListRow[]) {
   return rows.map((row) => ({
     id: row.id,
+    definitionId: row.definition_id,
     name: row.name_snapshot,
     description: row.description_snapshot,
     category: row.category_snapshot,
@@ -186,7 +192,8 @@ function mapTaskWriteError(err: unknown) {
       return {
         status: 409,
         code: 'TASK_STATE_CONFLICT',
-        message: 'Task is already in the requested state.',
+        // Already in the requested state, or cancelled by deactivation.
+        message: 'Task cannot be changed in its current state. Refresh and try again.',
       };
 
     default:

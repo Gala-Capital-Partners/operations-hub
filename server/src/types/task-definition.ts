@@ -37,3 +37,12 @@ export type TaskDefinitionRow = {
   created_at: Date;
   updated_at: Date;
 };
+
+/** Row returned by public.deactivate_task_definition. */
+export type TaskDefinitionDeactivationRow = {
+  id: string;
+  is_active: boolean;
+  // NULL only for definitions deactivated before audit columns existed.
+  deactivated_at: Date | null;
+  cancelled_instance_count: number;
+};

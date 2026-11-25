@@ -40,8 +40,10 @@ transaction setting itself is not proof of authentication.
 - Snapshots, schedule, definition references and other fields cannot be changed
   by these functions. The existing updated_at trigger still runs.
 - No deadline, future-date or historical cutoff is enforced: those business rules
-  remain unconfirmed. Deactivating a definition does not by itself disable its
-  already-generated instances. Locations/brands and actors must remain active.
+  remain unconfirmed. Deactivating a definition cancels only its future,
+  uncompleted instances; completing or reopening a cancelled instance returns
+  `55000` (see [task-definition deactivation](task-deactivation.md)). Today's
+  and past instances stay completable. Locations/brands and actors must remain active.
 
 ## Atomicity and concurrency
 
@@ -73,7 +75,7 @@ can change data; this is not tamper-proof audit storage.
 | SQLSTATE | Meaning | Suggested API handling |
 |---|---|---|
 | 42501 | Missing/unauthorized identity or target | 403 with generic message |
-| 55000 | Already in requested state | 409; refetch current state |
+| 55000 | Already in requested state, or cancelled by deactivation | 409; refetch current state |
 | 22004 | Missing instance argument | 400 |
 | 22023 | Invalid numeric reading or oversized notes | 400 |
 | 25000 | Unsupported transaction isolation | Backend configuration error |
