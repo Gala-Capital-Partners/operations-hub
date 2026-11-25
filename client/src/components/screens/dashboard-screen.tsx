@@ -4,31 +4,101 @@ import Link from 'next/link'
 import { useTasks } from '@/hooks/use-tasks'
 import { Ring, SalesChart } from '@/components/charts'
 import { LocationRollup } from '@/components/dashboard/location-rollup'
+import { MyTasksToday, type HomeLocation } from '@/components/dashboard/my-tasks-today'
 import { Ic } from '@/components/icons'
 import { BRANDS, ROLES } from '@/lib/config'
 import { localToday } from '@/lib/api/task-instances'
 import { statusColor } from '@/lib/format'
 import { LOCATION_DATA, SALES } from '@/lib/mock-data'
-import { type Brand, type Role } from '@/lib/types'
+import { type Role } from '@/lib/types'
 
 export function DashboardScreen({
   role,
-  brand,
+  brandName,
   userName,
   live = false,
+  homeLocation = null,
 }: {
   role: Role
-  brand: Brand
+  brandName: string
   /** Signed-in user's name; the demo uses a placeholder person */
   userName?: string
-  /** Real Supabase session: the location rollup uses database tasks instead of mock data */
+  /** Real Supabase session: database tasks; sample sales/compliance data is hidden */
   live?: boolean
+  /** Real session: the store whose checklist "My Tasks Today" shows (none for admins) */
+  homeLocation?: HomeLocation | null
 }) {
+  // The dashboard only renders on the client (after the session loads), so the
+  // viewer's local clock is safe to use here without a hydration mismatch.
+  const now = new Date()
+
+  return (
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
+      {/* Greeting */}
+      <div>
+        <h1 className="text-xl font-semibold text-stone-900">
+          {greeting(now)}, {(userName ?? ROLES[role].name).split(' ')[0]}
+        </h1>
+        <p className="text-sm text-stone-500 mt-0.5">
+          {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {brandName}
+        </p>
+      </div>
+
+      {live ? (homeLocation && <MyTasksToday location={homeLocation} />) : <DemoOverview />}
+
+      {/* Sample compliance alert — demo only (no compliance data source yet) */}
+      {!live && (role === 'corporate' || role === 'brand') && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <span className="text-amber-500 mt-0.5 flex-shrink-0"><Ic.Alert /></span>
+          <div>
+            <p className="text-sm font-semibold text-amber-900">2 compliance documents expiring within 30 days</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              North Park Franchise Agreement expires in <strong>3 days</strong> · Downtown Flagship Agreement expires in 17 days
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Location rollup — live for managers and admins; mock data in the demo */}
+      {live && role !== 'employee' && (
+        <LocationRollup date={localToday(Intl.DateTimeFormat().resolvedOptions().timeZone, now)} />
+      )}
+      {!live && (role === 'corporate' || role === 'brand') && (
+        <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-stone-900">Task Completion by Location</h2>
+            <span className="text-xs text-stone-500">Today · {LOCATION_DATA.filter(l => l.pct === 100).length}/{LOCATION_DATA.length} complete</span>
+          </div>
+          <div className="divide-y divide-stone-100">
+            {LOCATION_DATA.map(loc => (
+              <div key={loc.id} className="px-5 py-3 flex items-center gap-3 hover:bg-stone-50 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-stone-900 truncate">{loc.name}</p>
+                  <p className="text-xs text-stone-400">{BRANDS[loc.brand].name}</p>
+                </div>
+                <div className="w-24 bg-stone-100 rounded-full h-1.5 hidden sm:block">
+                  <div className="h-1.5 rounded-full" style={{ width: `${loc.pct}%`, backgroundColor: statusColor(loc.pct) }} />
+                </div>
+                <div className="text-right flex-shrink-0 w-12">
+                  <p className="text-sm font-mono font-semibold" style={{ color: statusColor(loc.pct) }}>{loc.pct}%</p>
+                  {loc.overdue > 0 && <p className="text-[10px] text-red-500 font-medium">{loc.overdue} late</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Prototype overview for the demo role picker: sample sales and in-memory tasks. */
+function DemoOverview() {
   const latest = SALES[SALES.length - 1]
   const diff = latest.today - latest.yesterday
   const pctStr = ((diff / latest.yesterday) * 100).toFixed(1)
   const positive = diff > 0
-  // Tasks come from the backend API (was: useState(TASKS_DATA))
+  // Prototype in-memory /api/tasks; real sessions use MyTasksToday instead.
   const { tasks, toggleTask } = useTasks()
   const doneCount = tasks.filter(t => t.done).length
 
@@ -43,22 +113,8 @@ export function DashboardScreen({
     { label: 'Tasks Today', value: `${doneCount}/${tasks.length}`, sub: 'At this location', trend: null },
   ]
 
-  // The dashboard only renders on the client (after the session loads), so the
-  // viewer's local clock is safe to use here without a hydration mismatch.
-  const now = new Date()
-
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
-      {/* Greeting */}
-      <div>
-        <h1 className="text-xl font-semibold text-stone-900">
-          {greeting(now)}, {(userName ?? ROLES[role].name).split(' ')[0]}
-        </h1>
-        <p className="text-sm text-stone-500 mt-0.5">
-          {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {BRANDS[brand].name}
-        </p>
-      </div>
-
+    <>
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {kpis.map(k => (
@@ -73,19 +129,6 @@ export function DashboardScreen({
           </div>
         ))}
       </div>
-
-      {/* Compliance alert — corporate/brand */}
-      {(role === 'corporate' || role === 'brand') && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <span className="text-amber-500 mt-0.5 flex-shrink-0"><Ic.Alert /></span>
-          <div>
-            <p className="text-sm font-semibold text-amber-900">2 compliance documents expiring within 30 days</p>
-            <p className="text-xs text-amber-700 mt-0.5">
-              North Park Franchise Agreement expires in <strong>3 days</strong> · Downtown Flagship Agreement expires in 17 days
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Chart + tasks grid */}
       <div className="grid md:grid-cols-[1fr_300px] gap-4">
@@ -153,37 +196,7 @@ export function DashboardScreen({
           )}
         </div>
       </div>
-
-      {/* Location rollup — live for managers and admins; mock data in the demo */}
-      {live && role !== 'employee' && (
-        <LocationRollup date={localToday(Intl.DateTimeFormat().resolvedOptions().timeZone, now)} />
-      )}
-      {!live && (role === 'corporate' || role === 'brand') && (
-        <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-stone-900">Task Completion by Location</h2>
-            <span className="text-xs text-stone-500">Today · {LOCATION_DATA.filter(l => l.pct === 100).length}/{LOCATION_DATA.length} complete</span>
-          </div>
-          <div className="divide-y divide-stone-100">
-            {LOCATION_DATA.map(loc => (
-              <div key={loc.id} className="px-5 py-3 flex items-center gap-3 hover:bg-stone-50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-stone-900 truncate">{loc.name}</p>
-                  <p className="text-xs text-stone-400">{BRANDS[loc.brand].name}</p>
-                </div>
-                <div className="w-24 bg-stone-100 rounded-full h-1.5 hidden sm:block">
-                  <div className="h-1.5 rounded-full" style={{ width: `${loc.pct}%`, backgroundColor: statusColor(loc.pct) }} />
-                </div>
-                <div className="text-right flex-shrink-0 w-12">
-                  <p className="text-sm font-mono font-semibold" style={{ color: statusColor(loc.pct) }}>{loc.pct}%</p>
-                  {loc.overdue > 0 && <p className="text-[10px] text-red-500 font-medium">{loc.overdue} late</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 

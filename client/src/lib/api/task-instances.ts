@@ -61,9 +61,11 @@ const FRIENDLY: Record<string, string> = {
   TASK_OPERATION_FORBIDDEN: "You don't have permission to do that at this location.",
   TASK_STATE_CONFLICT: 'Someone else already changed this task. The list has been refreshed.',
   INVALID_TASK_INPUT: 'That reading is outside the allowed range.',
+  TASK_DEFINITION_FORBIDDEN: "You can't create tasks for that store or brand.",
 }
 
-async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Authenticated JSON request to the backend; shared by the task API clients. */
+export async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAccessToken()
   if (!token) throw new TaskApiError('Your session has ended. Please sign in again.', 401)
 

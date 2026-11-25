@@ -4,12 +4,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Ring } from '@/components/charts'
 import { Ic } from '@/components/icons'
 import type { Account } from '@/components/session-provider'
+import { CreateTaskDialog } from '@/components/tasks/create-task-dialog'
 import { TaskInstanceDialog } from '@/components/tasks/task-instance-dialog'
 import { useTaskInstances } from '@/hooks/use-task-instances'
 import { addDays, localTimeOf, localToday, taskInstancesApi, type TaskInstance } from '@/lib/api/task-instances'
-import { canAtLocation } from '@/lib/auth'
+import { brandLocations, canAtLocation } from '@/lib/auth'
 import { formatTime, statusColor } from '@/lib/format'
-import type { Brand } from '@/lib/types'
 
 const CATEGORIES = ['Opening', 'Midday', 'Closing'] as const
 
@@ -25,14 +25,10 @@ function whenLabel(task: TaskInstance) {
 /**
  * Tasks screen for signed-in (Supabase) users: real task instances from
  * GET /api/task-instances for one location and store-local day, with complete and
- * reopen through the API. Creating or editing task templates has no API yet.
+ * reopen through the API.
  */
-export function TasksDbScreen({ account, brand }: { account: Account; brand: Brand }) {
-  const brandId = account.brands.find(b => b.slug === brand)?.id
-  const locations = useMemo(
-    () => account.locations.filter(l => l.brandId === brandId).sort((a, b) => (a.storeNumber ?? a.name).localeCompare(b.storeNumber ?? b.name)),
-    [account.locations, brandId],
-  )
+export function TasksDbScreen({ account, brand }: { account: Account; brand: string }) {
+  const locations = useMemo(() => brandLocations(account, brand), [account, brand])
 
   const [locationId, setLocationId] = useState<string | null>(locations[0]?.id ?? null)
   const location = locations.find(l => l.id === locationId) ?? null
@@ -40,6 +36,8 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
   const [date, setDate] = useState<string | null>(today)
   const [view, setView] = useState<'mytasks' | 'rollup'>('mytasks')
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   // Switching brand changes the available locations; switching location resets to its "today".
   useEffect(() => {
@@ -62,6 +60,12 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
 
   const canComplete = !!locationId && canAtLocation(account, 'task_instances.complete', locationId)
   const canReopen = !!locationId && canAtLocation(account, 'task_instances.reopen', locationId)
+  // Creating tasks needs tasks.manage at this store; brand-wide tasks need it for the whole brand.
+  const canCreate = !!locationId && canAtLocation(account, 'tasks.manage', locationId)
+  const brandInfo = account.brands.find(b => b.slug === brand) ?? null
+  const canCreateBrandWide = (account.permissions ?? []).some(
+    p => p.permission === 'tasks.manage' && (p.scope === 'organization' || (p.scope === 'brand' && p.brandId === brandInfo?.id)),
+  )
   const doneCount = tasks.filter(t => t.completedAt).length
   const pct = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0
   const openTask = [...tasks, ...overdue].find(t => t.id === openTaskId) ?? null
@@ -132,6 +136,21 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
+      {creating && brandInfo && today && (
+        <CreateTaskDialog
+          brand={brandInfo}
+          location={location}
+          canCreateBrandWide={canCreateBrandWide}
+          today={today}
+          onClose={() => setCreating(false)}
+          onCreated={name => {
+            setCreating(false)
+            setNotice(`“${name}” was created. Days in the coming week appear on the checklist now; later days are added automatically.`)
+            void reload()
+          }}
+        />
+      )}
+
       {openTask && (
         <TaskInstanceDialog
           key={openTask.id}
@@ -154,11 +173,21 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
 
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-stone-900">Tasks</h1>
-          <p className="text-xs text-stone-500 mt-0.5">
-            {location.name}{location.storeNumber ? ` · ${location.storeNumber}` : ''}
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold text-stone-900">Tasks</h1>
+            <p className="text-xs text-stone-500 mt-0.5">
+              {location.name}{location.storeNumber ? ` · ${location.storeNumber}` : ''}
+            </p>
+          </div>
+          {canCreate && brandInfo && (
+            <button
+              onClick={() => { setNotice(null); setCreating(true) }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-teal-700 hover:opacity-90 flex-shrink-0"
+            >
+              + New task
+            </button>
+          )}
         </div>
         {locations.length > 1 && (
           <div className="bg-stone-100 rounded-lg p-1 flex gap-1 flex-1 sm:flex-none">
@@ -174,6 +203,13 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
           </div>
         )}
       </div>
+
+      {notice && (
+        <div role="status" className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 flex items-start gap-3">
+          <p className="flex-1 text-sm text-emerald-800">{notice}</p>
+          <button onClick={() => setNotice(null)} className="text-xs font-semibold text-emerald-800 hover:underline">Dismiss</button>
+        </div>
+      )}
 
       {view === 'mytasks' && (
         <>
@@ -265,7 +301,7 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
                 )
               })}
 
-              <p className="text-xs text-stone-400 text-center">Creating and editing task templates isn&apos;t available yet.</p>
+              <p className="text-xs text-stone-400 text-center">Editing task isn&apos;t available yet.</p>
             </>
           )}
         </>
