@@ -35,6 +35,7 @@ BEGIN
         LEFT JOIN public.task_instances AS t
             ON t.location_id = l.id
             AND t.scheduled_day = target_day
+            AND t.cancelled_at IS NULL
         GROUP BY l.id, l.name, l.store_number, l.timezone, b.id, b.name
         ORDER BY b.name, l.name, l.id
     ) AS s;
@@ -185,6 +186,12 @@ BEGIN
     PERFORM pg_temp.assert_can_report(manager,false,'manager after removal');
     PERFORM pg_temp.assert_summary(manager,'2026-11-19','');
     PERFORM pg_temp.assert_summary(mixed,'2026-11-19','Alpha/A1 Assigned=2/1');
+
+    -- Occurrences cancelled by definition deactivation are not counted.
+    UPDATE public.task_instances SET cancelled_at=now(), cancelled_by=org_admin
+    WHERE location_id=a1 AND scheduled_day='2026-11-20';
+    PERFORM pg_temp.assert_summary(org_admin,'2026-11-20',
+        'Alpha/A1 Assigned=0/0; Alpha/A2 Empty=0/0; Bravo/B1 Other brand=0/0');
 END;
 $$;
 ROLLBACK;

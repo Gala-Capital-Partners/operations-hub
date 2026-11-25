@@ -146,6 +146,8 @@ The disposable concurrency harness also checks duplicate generation across calls
 - Copy mode, timezone, instructions and numeric units/bounds into each instance.
 - Reuse the same scheduled instant on retries; never overwrite historical rows.
 - Do not use `scheduled_at` as an automatic visibility cutoff or deadline.
+- Deactivation stops generation and cancels future uncompleted occurrences per
+  store-local date; see [task-definition deactivation](task-deactivation.md).
 - Generation and definition writers are implemented; direct runtime table
   writes remain denied. Creation and scheduled runs both use the shared generator. See
   [task completion](task-completion.md).

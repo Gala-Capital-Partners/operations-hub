@@ -9,7 +9,13 @@ import {
   normalizeTaskDefinitionBody,
   validateTaskDefinitionBody,
 } from '../validation/task-definition.js';
-import type { TaskDefinitionRow } from '../types/task-definition.js';
+import type {
+  TaskDefinitionDeactivationRow,
+  TaskDefinitionRow,
+} from '../types/task-definition.js';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const createDefinitionQuery = `
   SELECT d.id, d.brand_id, d.location_id, d.created_by,
@@ -24,6 +30,14 @@ const createDefinitionQuery = `
     $7::date, $8::date, $9::text, $10::time[], $11::time,
     $12::text, $13::numeric, $14::numeric
   ) AS d
+`;
+
+// Stops future generation, cancels uncompleted occurrences after each store's
+// local today, and keeps today, the past and completed history. Repeat calls
+// return the current state with a zero count.
+const deactivateDefinitionQuery = `
+  SELECT id, is_active, deactivated_at, cancelled_instance_count
+  FROM public.deactivate_task_definition($1::uuid)
 `;
 
 function toDefinitionResponse(row: TaskDefinitionRow) {
@@ -146,6 +160,81 @@ export function createTaskDefinitionController(pool: Pool): RequestHandler {
         });
       }
       // Unexpected foreign-key failures and configuration errors remain server errors.
+      throw error;
+    }
+  };
+}
+
+export function createTaskDefinitionDeactivateController(
+  pool: Pool,
+): RequestHandler {
+  return async (req, res) => {
+    const definitionId = req.params.id;
+    if (typeof definitionId !== 'string' || !UUID_PATTERN.test(definitionId)) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_DEFINITION_ID',
+          message: 'Task definition ID must be a UUID.',
+        },
+      });
+    }
+
+    const body: unknown = req.body;
+    if (
+      body !== undefined &&
+      (typeof body !== 'object' ||
+        body === null ||
+        Array.isArray(body) ||
+        Object.keys(body).length > 0)
+    ) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_BODY',
+          message: 'Deactivation accepts no body or an empty JSON object.',
+        },
+      });
+    }
+
+    const actorId: unknown = res.locals.actorId;
+    if (typeof actorId !== 'string' || !actorId) {
+      return res
+        .status(401)
+        .json({ error: { message: 'Authentication required' } });
+    }
+
+    try {
+      const row = await withUserTransaction(pool, actorId, async (db) => {
+        const data = await db.query<TaskDefinitionDeactivationRow>(
+          deactivateDefinitionQuery,
+          [definitionId],
+        );
+        if (data.rows.length !== 1) {
+          throw new Error(
+            'Definition deactivation did not return exactly one row',
+          );
+        }
+        return data.rows[0];
+      });
+      return res.status(200).json({
+        id: row.id,
+        isActive: row.is_active,
+        deactivatedAt: row.deactivated_at,
+        cancelledInstanceCount: row.cancelled_instance_count,
+      });
+    } catch (error) {
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? error.code
+          : undefined;
+      // Missing, other-organization and unauthorized definitions look the same.
+      if (code === '42501') {
+        return res.status(403).json({
+          error: {
+            code: 'TASK_DEFINITION_FORBIDDEN',
+            message: 'You are not authorized to deactivate this task definition.',
+          },
+        });
+      }
       throw error;
     }
   };
