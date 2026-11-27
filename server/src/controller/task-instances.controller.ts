@@ -24,6 +24,7 @@ const readQuery = `
   SELECT
     t.id,
     t.definition_id,
+    identity_access.can_deactivate_task_definition(t.definition_id) AS can_deactivate,
     t.name_snapshot,
     t.description_snapshot,
     t.category_snapshot,
@@ -119,6 +120,7 @@ function toTaskListResponse(rows: TaskInstanceListRow[]) {
   return rows.map((row) => ({
     id: row.id,
     definitionId: row.definition_id,
+    canDeactivate: row.can_deactivate,
     name: row.name_snapshot,
     description: row.description_snapshot,
     category: row.category_snapshot,

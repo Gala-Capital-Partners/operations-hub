@@ -4,6 +4,8 @@ import { getAccessToken } from '@/lib/supabase'
 /** A database task instance, as returned by GET /api/task-instances. */
 export type TaskInstance = {
   id: string
+  definitionId?: string | null
+  canDeactivate?: boolean
   name: string
   description: string | null
   category: 'Opening' | 'Midday' | 'Closing'
@@ -88,6 +90,12 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new TaskApiError(message, res.status, code)
   }
   return body as T
+}
+
+export function deactivateTaskDefinition(id: string) {
+  return call<{ id: string; isActive: false; cancelledInstanceCount: number }>(
+    `/task-definitions/${encodeURIComponent(id)}/deactivate`, { method: 'POST' },
+  )
 }
 
 export const taskInstancesApi = {

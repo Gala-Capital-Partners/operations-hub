@@ -63,6 +63,7 @@ DECLARE
     def_other_brand uuid := gen_random_uuid();
     base date := (now() AT TIME ZONE 'UTC')::date;
     days text;
+    capability text := 'SELECT identity_access.can_deactivate_task_definition(%L)';
     deact text := 'SELECT concat_ws(''|'', is_active, deactivated_at IS NOT NULL, cancelled_instance_count) FROM public.deactivate_task_definition(%L)';
     sched text := 'SELECT public.scheduler_generate_task_instances(%L, %L::date[], %L)';
     gen text := 'SELECT public.generate_task_instances(%L, %L::date[], %L)';
@@ -115,6 +116,15 @@ BEGIN
          'FREQ=DAILY', base - 10, 'timed', '{10:00,18:00}'),
         (def_other_brand, brand_b, NULL, org_admin, 'Other brand task', '', 'Opening',
          'FREQ=DAILY', base - 10, 'all_day', '{}');
+
+    PERFORM pg_temp.expect(pg_temp.run_as('operations_hub_runtime', manager,
+        format(capability, def_store)), 'true', 'store manager can deactivate own store definition');
+    PERFORM pg_temp.expect(pg_temp.run_as('operations_hub_runtime', manager,
+        format(capability, def_brand)), 'false', 'store manager cannot deactivate brand definition');
+    PERFORM pg_temp.expect(pg_temp.run_as('operations_hub_runtime', brand_admin,
+        format(capability, def_brand)), 'true', 'brand admin can deactivate brand definition');
+    PERFORM pg_temp.expect(pg_temp.run_as('operations_hub_runtime', employee,
+        format(capability, def_store)), 'false', 'employee cannot deactivate');
 
     -- Generate real occurrences (base-3 .. base+3 in every target store).
     PERFORM pg_temp.expect(pg_temp.run_as('operations_hub_scheduler', NULL,
@@ -265,6 +275,8 @@ BEGIN
     -- Other brand's definition untouched.
     PERFORM pg_temp.expect((SELECT is_active::text FROM public.task_definitions WHERE id = def_other_brand),
         'true', 'other definition active');
+    PERFORM pg_temp.expect(pg_temp.run_as('operations_hub_runtime', manager,
+        format(capability, def_store)), 'false', 'inactive definition stays unavailable on reread');
 END;
 $$;
 

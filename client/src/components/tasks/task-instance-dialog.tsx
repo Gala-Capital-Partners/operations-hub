@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { localTimeOf, type CompleteInput, type TaskInstance } from '@/lib/api/task-instances'
+import { deactivateTaskDefinition, localTimeOf, type CompleteInput, type TaskInstance } from '@/lib/api/task-instances'
 import { formatTime } from '@/lib/format'
 
 /**
@@ -13,6 +13,8 @@ export function TaskInstanceDialog({
   currentUserId,
   canComplete,
   canReopen,
+  canDeactivate,
+  onDeactivated,
   busy,
   onComplete,
   onReopen,
@@ -22,6 +24,8 @@ export function TaskInstanceDialog({
   currentUserId: string
   canComplete: boolean
   canReopen: boolean
+  canDeactivate: boolean
+  onDeactivated: (count: number) => void
   busy: boolean
   onComplete: (input: CompleteInput) => void
   onReopen: () => void
@@ -32,6 +36,24 @@ export function TaskInstanceDialog({
   const [reading, setReading] = useState('')
   const [notes, setNotes] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+
+  const [deactivating, setDeactivating] = useState(false)
+  const [deactivationError, setDeactivationError] = useState<string | null>(null)
+
+  async function deactivate() {
+    if (!task.definitionId || !canDeactivate || busy || deactivating) return
+    if (!window.confirm(`Deactivate “${task.name}” for all stores covered by this definition? Future open occurrences will be cancelled after each store’s local today. Today’s checklist and completed history are preserved.`)) return
+    setDeactivating(true)
+    setDeactivationError(null)
+    try {
+      const result = await deactivateTaskDefinition(task.definitionId)
+      onDeactivated(result.cancelledInstanceCount)
+    } catch (err) {
+      setDeactivationError(err instanceof Error ? err.message : 'Could not deactivate this definition.')
+    } finally {
+      setDeactivating(false)
+    }
+  }
 
   const bounds =
     task.numericMin !== null && task.numericMax !== null
@@ -56,7 +78,7 @@ export function TaskInstanceDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="task-dialog-title">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/30" onClick={deactivating ? undefined : onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="px-5 pt-5 pb-3 border-b border-stone-100">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-400">{task.category} · {when}</p>
@@ -115,15 +137,25 @@ export function TaskInstanceDialog({
           <p className="px-5 py-4 text-sm text-stone-500">Not completed yet. Store teams complete tasks at their location.</p>
         )}
 
+        {canDeactivate && task.definitionId && (
+          <div className="px-5 py-3 border-t border-stone-100">
+            <button type="button" onClick={deactivate} disabled={busy || deactivating}
+              className="text-sm font-semibold text-red-700 hover:underline disabled:opacity-60">
+              {deactivating ? 'Deactivating…' : 'Deactivate task definition'}
+            </button>
+            {deactivationError && <p role="alert" className="mt-2 text-sm text-red-700">{deactivationError}</p>}
+          </div>
+        )}
+
         <div className="px-5 py-3 border-t border-stone-100 flex justify-end gap-2">
-          <button onClick={onClose} className="px-3.5 py-2 rounded-lg text-xs font-semibold text-stone-600 hover:bg-stone-100">Close</button>
+          <button onClick={onClose} disabled={deactivating} className="px-3.5 py-2 rounded-lg text-xs font-semibold text-stone-600 hover:bg-stone-100">Close</button>
           {done && canReopen && (
-            <button onClick={onReopen} disabled={busy} className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-stone-700 hover:bg-stone-800 disabled:opacity-60">
+            <button onClick={onReopen} disabled={busy || deactivating} className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-stone-700 hover:bg-stone-800 disabled:opacity-60">
               Reopen task
             </button>
           )}
           {!done && canComplete && (
-            <button type="submit" form="complete-form" disabled={busy} className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60">
+            <button type="submit" form="complete-form" disabled={busy || deactivating} className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60">
               Mark complete
             </button>
           )}
