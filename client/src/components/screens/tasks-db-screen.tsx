@@ -39,6 +39,7 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
   const today = location ? localToday(location.timezone) : null
   const [date, setDate] = useState<string | null>(today)
   const [view, setView] = useState<'mytasks' | 'rollup'>('mytasks')
+  const [deactivation, setDeactivation] = useState<{ locationId: string; date: string; message: string } | null>(null)
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
 
   // Switching brand changes the available locations; switching location resets to its "today".
@@ -137,6 +138,12 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
           key={openTask.id}
           task={openTask}
           currentUserId={account.userId}
+          canDeactivate={openTask.canDeactivate === true}
+          onDeactivated={(count) => {
+            setDeactivation({ locationId: location.id, date, message: `Definition inactive. ${count} future open ${count === 1 ? 'occurrence' : 'occurrences'} cancelled.` })
+            setOpenTaskId(null)
+            void reload()
+          }}
           canComplete={canComplete}
           canReopen={canReopen}
           busy={pendingIds.has(openTask.id)}
@@ -150,6 +157,10 @@ export function TasksDbScreen({ account, brand }: { account: Account; brand: Bra
             if (ok) setOpenTaskId(null)
           }}
         />
+      )}
+
+      {deactivation?.locationId === location.id && deactivation.date === date && (
+        <p role="status" className="rounded-lg bg-teal-50 p-3 text-sm text-teal-900">{deactivation.message}</p>
       )}
 
       {/* Header */}

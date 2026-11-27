@@ -21,8 +21,7 @@ No body (or `{}`). Response `200`:
 | 403 | `TASK_DEFINITION_FORBIDDEN` | Missing, other-organization or unauthorized definition (one response) |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | A body that is not JSON |
 
-The listing response (`GET /api/task-instances`) now includes each task's
-`definitionId`, so a checklist item can offer "deactivate this task".
+The checklist response includes `definitionId` and `canDeactivate`. The latter is true only for active definitions the caller can manage at their target scope. The write endpoint rechecks authorization.
 
 ## Rules
 

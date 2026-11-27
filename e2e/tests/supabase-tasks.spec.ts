@@ -155,3 +155,52 @@ test.describe('Database tasks (Supabase)', () => {
     await expect(page.getByText('Review prep levels with kitchen lead')).toHaveCount(0)
   })
 })
+
+test('a manager can cancel confirmation and then deactivate the definition behind a checklist item', async ({ page }) => {
+  const definitionId = 'f1c476e0-edf6-4a29-83ac-f9c34ab0c541'
+  const name = 'Review prep levels with kitchen lead'
+  const brandTask = 'Brand-wide opening checklist'
+  // Sign-in lands on the dashboard before the checklist.
+  await page.route('**/api/task-instances/summary?**', route => route.fulfill({ json: {
+    date: new URL(route.request().url()).searchParams.get('date'),
+    totals: { locations: 0, locationsWithoutTasks: 0, total: 0, completed: 0, remaining: 0 },
+    locations: [],
+  } }))
+  let posts = 0
+  // Keep the seed intact. The SQL suite exercises how the API computes these flags.
+  await page.route('**/api/task-instances?**', async route => {
+    const occurrence = {
+      id: 'store-occurrence', definitionId, name, category: 'Opening', isAllDay: true,
+      scheduledDay: new URL(route.request().url()).searchParams.get('date'),
+      completedAt: null, completedBy: null, numericUnit: null, notes: null,
+      dueTime: null, timezone: 'America/Los_Angeles',
+    }
+    await route.fulfill({ json: { tasks: [
+      { ...occurrence, canDeactivate: posts === 0 },
+      { ...occurrence, id: 'brand-occurrence', definitionId: 'brand-definition', name: brandTask, canDeactivate: false },
+    ] } })
+  })
+  await page.route(`**/api/task-definitions/${definitionId}/deactivate`, async route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    posts++
+    await route.fulfill({ json: { id: definitionId, isActive: false, cancelledInstanceCount: 3 } })
+  })
+  await signIn(page, 'jordan.lee@opshub.test')
+  await openTasks(page)
+  await todayRow(page, brandTask).getByText(brandTask).click()
+  await expect(dialog(page).getByRole('button', { name: 'Deactivate task definition' })).toHaveCount(0)
+  await dialog(page).getByRole('button', { name: 'Close' }).click()
+  await todayRow(page, name).getByText(name).click()
+  const action = dialog(page).getByRole('button', { name: 'Deactivate task definition' })
+  page.once('dialog', prompt => prompt.dismiss())
+  await action.click()
+  expect(posts).toBe(0)
+  page.once('dialog', prompt => prompt.accept())
+  await action.click()
+  await expect(page.getByText('Definition inactive. 3 future open occurrences cancelled.')).toBeVisible()
+  expect(posts).toBe(1)
+  await page.reload()
+  await todayRow(page, name).getByText(name).click()
+  await expect(action).toHaveCount(0)
+})
